@@ -34,6 +34,23 @@
 
 class CConfigGroup;
 
+struct cluster_set
+{
+   ConfigType type;
+   int scopeLength;
+   int keyLength;
+   int valueLength;
+   char stringData;
+};
+
+struct unique_string_set
+{
+   int nid;
+   int unique_id;
+   int stringLength;
+   char stringData;
+};
+
 class CConfigKey
 {
  private:
@@ -123,11 +140,18 @@ public:
     void addDbProcData ( const char * procName, const char * key, const char * dataValue );
     void addDbClusterData ( const char * key, const char * dataValue );
     void addUniqueString(int nid, int id, const char * uniqStr );
-    bool findUniqueString(int nid, const char * uniqStr, strId_t & id );
     int  getMaxUniqueId( int nid );
+    bool getUniqueString(int nid, int id, string & uniqStr );
+    bool getUniqueStringId(int nid, const char * uniqStr, strId_t & id );
     void strIdToString ( strId_t stringId, string & value );
 
-   
+    int    PackRegistry( char *&buffer, ConfigType type );
+    void   UnpackRegistry( char *&buffer, int length );    
+    int    PackUniqueStrings( char *&buffer );
+    void   UnpackUniqueStrings( char *&buffer, int length );
+    int    getRegistrySize();
+    int    getUniqueStringsSize();
+
 protected:
 private:
     CConfigGroup *cluster_;     // predefined cluster global group 

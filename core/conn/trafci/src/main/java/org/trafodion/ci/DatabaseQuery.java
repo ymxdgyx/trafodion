@@ -22,6 +22,7 @@
 package org.trafodion.ci;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.sql.ParameterMetaData;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
@@ -448,6 +449,7 @@ public class DatabaseQuery extends QueryWrapper
       List<String> paramList=null;
       String[] errParams=new String[1];
 
+
       keyToken = parser.getNextKeyToken();
       stmtName = parser.getNextPreparedStmtNameToken();
       if (stmtName == null)
@@ -498,6 +500,9 @@ public class DatabaseQuery extends QueryWrapper
          writer.writeError(sessObj, 'E',SessionError.STMT_NOT_FOUND,errParams);
          throw uic;
       }
+
+      ParameterMetaData paramMetaData=null;
+      paramMetaData = pStmt.getParameterMetaData();
 
       String sqlQueryStr=((TrafT4Statement)pStmt).getSQL();
       List<String> namedParamList=getParamNames(sqlQueryStr);
@@ -572,7 +577,14 @@ public class DatabaseQuery extends QueryWrapper
                         pStmt.setNull(index+1,Types.NULL);
                      else
                      {
-                        pStmt.setObject(index+1,new String(value.toString()));
+                int paramType = paramMetaData.getParameterType(index+1);
+                if ((paramType == Types.BINARY) ||
+                    (paramType == Types.VARBINARY))
+                    {
+                        pStmt.setBytes(index+1, value.getBytes());
+                    }
+                else
+                    pStmt.setObject(index+1,new String(value.toString()));
                      }
                   }
                   
@@ -641,6 +653,7 @@ public class DatabaseQuery extends QueryWrapper
          sessObj.setQryEndTime();
          
       }
+
 
    }
 
@@ -714,7 +727,7 @@ public class DatabaseQuery extends QueryWrapper
                          value = evaluateParameterValue(pv);
                          if (sessObj.isDebugOn())
                          {
-                        	 System.out.println("@@@Debug: DatabaseQuery:: pv = " +  pv);
+                             System.out.println("@@@Debug: DatabaseQuery:: pv = " +  pv);
                              System.out.println("@@@Debug: DatabaseQuery:: value = " + value);
                          }
                      }
@@ -1091,6 +1104,9 @@ public class DatabaseQuery extends QueryWrapper
             String paramValue=null;
             int namedParamErrors=0;
 
+            ParameterMetaData paramMetaData=null;
+            paramMetaData = ps.getParameterMetaData();
+
             int index=0;
             for (int i=0;i < paramList.size(); i++)
             {
@@ -1115,7 +1131,15 @@ public class DatabaseQuery extends QueryWrapper
                         ps.setNull(index+1,Types.NULL);
                      }else
                      {
-                        ps.setObject(index+1,paramValue);
+                       int paramType = paramMetaData.getParameterType(index+1);
+                       if ((paramType == Types.BINARY) ||
+                           (paramType == Types.VARBINARY))
+                           {
+                               ps.setBytes(index+1, paramValue.getBytes());
+                               //ps.setString(index+1, s);
+                           }
+                       else
+                           ps.setObject(index+1,paramValue);
                      }
                   }catch (NumberFormatException nfe)
                   {
@@ -1364,10 +1388,29 @@ public class DatabaseQuery extends QueryWrapper
      
       for (int i=1;i<=numColumns ;i++)
       {
+         ResultSetMetaData rsmd = rs.getMetaData();
          String value=null;
          try
          {
-            value=rs.getString(i);
+             if ((rsmd.getColumnType(i)==Types.BINARY) ||
+                 (rsmd.getColumnType(i)==Types.VARBINARY))
+                 {
+                     // extract binary data from input and convert to hex.
+                     // This avoids displaying unprintable characters.
+                     value = "";
+                     InputStream is = rs.getBinaryStream(i);
+                     int numBytes = is.available();
+                     for(int ii = 0; ii < numBytes; ii++){
+                         int v = is.read();
+                         String thisByte = Integer.toHexString(v).toUpperCase();
+                         // leading zero pad
+                         if (thisByte.length() == 1)
+                             thisByte = "0" + thisByte;
+                         value += thisByte;
+                     }
+                 }
+             else
+                 value=rs.getString(i);
             if (sessObj.getQuery().getQueryId() == SessionDefaults.SHOW_SERVICE)
                return value;
          } catch (SQLException sqlEx)
@@ -1376,7 +1419,6 @@ public class DatabaseQuery extends QueryWrapper
             //Displaying null in this case.
          }
 
-         ResultSetMetaData rsmd = rs.getMetaData();
          if(value != null && rsmd.getColumnType(i)==Types.TIMESTAMP && value.length() < rsmd.getColumnDisplaySize(i))
          {
           	 value = (value.trim()+"000000").substring(0,rsmd.getColumnDisplaySize(i));
@@ -1456,6 +1498,14 @@ public class DatabaseQuery extends QueryWrapper
                  ex.printStackTrace();
              }
          }  
+         
+
+         if ((rsmd.getColumnType(i)==Types.BINARY) ||
+             (rsmd.getColumnType(i)==Types.VARBINARY))
+             {
+                 // binary value will be displayed in hex.
+                 colNameSize = 2 * rsmd.getColumnDisplaySize(i);
+             }
          
          if (colNameSize > rsmd.getColumnDisplaySize(i))
             colSize[i-1]=colNameSize;

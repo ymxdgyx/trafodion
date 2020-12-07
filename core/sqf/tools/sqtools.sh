@@ -327,7 +327,7 @@ function run_util {
 # check the startup log and sort the interesting even chronologically
 function sqchksl {
     setup_sqpdsh
-    eval '$SQPDSHA "cd $TRAF_HOME/sql/scripts; grep Executing startup.log 2>/dev/null" 2>/dev/null | sort -k4 -k5'
+    eval '$SQPDSHA "cd $TRAF_LOG; grep Executing mon_startup.log 2>/dev/null" 2>/dev/null | sort -k4 -k5'
 }
 
 function sqchkopt {
@@ -371,7 +371,7 @@ function sqsecheck {
 }
 
 function sqchkmpi {
-    pdsh $MY_NODES "cd $TRAF_HOME/logs; egrep -i '(mpi bug|ibv_create)' *.log" 2>/dev/null
+    pdsh $MY_NODES "cd $TRAF_LOG; egrep -i '(mpi bug|ibv_create)' *.log" 2>/dev/null
 }
 
 #### Log Collection functions
@@ -430,27 +430,26 @@ function sqsavelogs {
     
     sqcollectmonmemlog 2>/dev/null
 
-    cp -p $TRAF_HOME/logs/master_exec*.log ${lv_copy_to_dir}
-    cp -p $TRAF_HOME/logs/mon.*.log ${lv_copy_to_dir}
-    cp -p $TRAF_HOME/logs/monmem.*.log ${lv_copy_to_dir}
-    cp -p $TRAF_HOME/logs/pstart*.log ${lv_copy_to_dir}
-    cp -p $TRAF_HOME/logs/smstats.*.log ${lv_copy_to_dir}
-    cp -p $TRAF_HOME/logs/sqmo*.log ${lv_copy_to_dir}
-    cp -p $TRAF_HOME/logs/trafodion.*log* ${lv_copy_to_dir}
-    cp -p $TRAF_HOME/logs/tm*.log ${lv_copy_to_dir}
-    cp -p $TRAF_HOME/logs/wdt.*.log ${lv_copy_to_dir}
+    cp -p $TRAF_LOG/master_exec*.log ${lv_copy_to_dir}
+    cp -p $TRAF_LOG/mon.*.log ${lv_copy_to_dir}
+    cp -p $TRAF_LOG/monmem.*.log ${lv_copy_to_dir}
+    cp -p $TRAF_LOG/pstart*.log ${lv_copy_to_dir}
+    cp -p $TRAF_LOG/smstats.*.log ${lv_copy_to_dir}
+    cp -p $TRAF_LOG/sqmo*.log ${lv_copy_to_dir}
+    cp -p $TRAF_LOG/trafodion.*log* ${lv_copy_to_dir}
+    cp -p $TRAF_LOG/tm*.log ${lv_copy_to_dir}
+    cp -p $TRAF_LOG/wdt.*.log ${lv_copy_to_dir}
 
     cp -p $TRAF_VAR/monitor.map.[0-9]*.* ${lv_copy_to_dir}
     cp -p $TRAF_VAR/monitor.trace* ${lv_copy_to_dir}
 
     lv_stdout_dir_name=${lv_copy_to_dir}/stdout_${lv_node}
     mkdir -p ${lv_stdout_dir_name}
-    cp -p $TRAF_HOME/sql/scripts/startup.log ${lv_copy_to_dir}/startup.${lv_node}.log
-    cp -p $TRAF_HOME/sql/scripts/stdout_* ${lv_stdout_dir_name}
-    cp -p $TRAF_HOME/sql/scripts/hs_err_pid*.log ${lv_stdout_dir_name}
+    cp -p $TRAF_LOG/startup.log ${lv_copy_to_dir}/startup.${lv_node}.log
+    cp -p $TRAF_LOG/stdout_* ${lv_stdout_dir_name}
 
     lv_config_dir_name=${lv_copy_to_dir}/sqconfig_db
-    cp -p $TRAF_HOME/sql/scripts/sqconfig.db ${lv_config_dir_name}/${lv_node}_sqconfig.db
+    cp -p $TRAF_VAR/sqconfig.db ${lv_config_dir_name}/${lv_node}_sqconfig.db
 
     sqsave_linux_info ${lv_linux_collection_dir}/linux
 
@@ -611,12 +610,12 @@ function sqcollectlogs {
 
     cp -p $TRAF_HOME/sqenv.sh .
     cp -p $TRAF_HOME/sqenvcom.sh .
-    cp -p $TRAF_HOME/etc/ms.env .
+    cp -p $TRAF_VAR/ms.env .
     cp -p $TRAF_HOME/sql/scripts/gomon.cold .
     cp -p $TRAF_HOME/sql/scripts/gomon.warm .
-    cp -p $TRAF_HOME/sql/scripts/sqconfig .
-    cp -p $TRAF_HOME/sql/scripts/mon.env . 2>/dev/null
-    cp -p $TRAF_HOME/sql/scripts/shell.env . 2>/dev/null
+    cp -p $TRAF_CONF/sqconfig .
+    cp -p $TRAF_VAR/mon.env . 2>/dev/null
+    cp -p $TRAF_VAR/shell.env . 2>/dev/null
     cd ..
 #   end configuration info
 
@@ -692,7 +691,7 @@ function sqcollectmonmemlog {
     if [ $monpid_x ]; then
       monpid=`printf "%d" 0x$monpid_x`
       nodename=`uname -n`
-      monmemlog $monpid nowait > $TRAF_HOME/logs/monmem.${nodename}.${monpid}.log
+      monmemlog $monpid nowait > $TRAF_LOG/monmem.${nodename}.${monpid}.log
     fi
 }
 
@@ -1002,7 +1001,7 @@ function cdw {
     cd $TRAF_HOME
 }
 function cdl {
-    cd $TRAF_HOME/logs
+    cd $TRAF_LOG
 }
 function cdb {
     cd $TRAF_HOME/export/bin${SQ_MBTYPE}
@@ -1014,10 +1013,16 @@ function cdt {
     cd $MPI_TMPDIR
 }
 function cdc {
-    cd /local/cores/$UID
+    cd $TRAF_CONF
 }
 function cdj {
     cd $TRAF_HOME/../sql/src/main/java/org/trafodion/sql
+}
+function cdci {
+    cd $TRAF_HOME/../conn/trafci/src/main/java/org/trafodion/ci
+}
+function cdt4 {
+    cd $TRAF_HOME/../conn/jdbcT4/src/main/java/org/trafodion/jdbc/t4
 }
 # ls variants
 function lst {

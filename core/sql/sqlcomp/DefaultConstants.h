@@ -383,7 +383,7 @@ enum DefaultConstants
   DYN_QUEUE_RESIZE_INIT_DOWN,
   DYN_QUEUE_RESIZE_INIT_UP,
   DYN_QUEUE_RESIZE_LIMIT,
-
+  DYN_QUEUE_RESIZE_OVERRIDE,
   // -------------------------------------------------------------------------
   // Enable 'ON' or disable 'OFF' considering hash joins of any form
   // -------------------------------------------------------------------------
@@ -523,6 +523,7 @@ enum DefaultConstants
   USTAT_MIN_ROWCOUNT_FOR_SAMPLE,     // Smallest table for which sampling used
   USTAT_MIN_ROWCOUNT_FOR_LOW_SAMPLE, // Smallest table for which lowest sampling rate used
   USTAT_MODIFY_DEFAULT_UEC,    // Modify the default UEC
+  USTAT_MULTI_COLUMN_LIMIT,    // Limit on number of columns in a multi-column histogram
   USTAT_UEC_HI_RATIO,          // When the estimated UEC/ROWCOUNT ratio is
   USTAT_UEC_LOW_RATIO,         // between HI_RATIO and LOW_RATIO, we will avoid
                                // calling xValue() to find the root value.
@@ -1261,6 +1262,7 @@ enum DefaultConstants
   COMP_BOOL_12,
   COMP_BOOL_13,
   COMP_BOOL_14,
+  COMP_BOOL_15,
   COMP_BOOL_18,
   COMP_BOOL_19,
   COMP_BOOL_20,
@@ -1658,6 +1660,7 @@ enum DefaultConstants
   COMP_BOOL_111,
   COMP_BOOL_112,
   COMP_BOOL_113,
+  COMP_BOOL_114,
   COMP_BOOL_115,
   COMP_BOOL_116,
   COMP_BOOL_117,
@@ -1727,6 +1730,7 @@ enum DefaultConstants
   COMP_BOOL_191,
   COMP_BOOL_192,
   COMP_BOOL_193,
+  COMP_BOOL_194,  // Can be used to turn off fix to JIRA Trafodion 3325
   COMP_BOOL_196,
   COMP_BOOL_197,
   COMP_BOOL_198,
@@ -1816,8 +1820,6 @@ enum DefaultConstants
   GEN_UDRRS_NUM_BUFFERS,
   GEN_UDRRS_SIZE_DOWN  ,
   GEN_UDRRS_SIZE_UP    ,
-
-  FAST_DELETE,
 
   ALLOW_UNEXTERNALIZED_MAINTAIN_OPTIONS,
 
@@ -1962,7 +1964,6 @@ enum DefaultConstants
   TMUDF_LEAF_CARDINALITY,
 
   UDF_SUBQ_IN_AGGS_AND_GBYS,
-
   USTAT_FETCHCOUNT_ACTIVE,
 
   SEMIJOIN_TO_INNERJOIN_INNER_ALLOWANCE,
@@ -2117,7 +2118,6 @@ enum DefaultConstants
   GEN_ONLJ_RIGHT_SIDE_QUEUE_DOWN,
   GEN_ONLJ_SET_QUEUE_RIGHT,
   GEN_ONLJ_SET_QUEUE_LEFT,
-
 
   
   SORT_REC_THRESHOLD,
@@ -2497,18 +2497,9 @@ enum DefaultConstants
   // But they can be inserted into
   // the defaults table which is read by executor at runtime.
   // ****** BEGIN SET SESSION DEFAULTs ***********************************
-  ALTPRI_ESP,
-  ALTPRI_MASTER,
   AQR_ENTRIES,
   ESP_ASSIGN_DEPTH,
-  ESP_FIXUP_PRIORITY_DELTA,
-  ESP_PRIORITY,
-  ESP_PRIORITY_DELTA,
   ESP_IDLE_TIMEOUT,
-  MASTER_PRIORITY,
-  MASTER_PRIORITY_DELTA,
-  MXCMP_PRIORITY,
-  MXCMP_PRIORITY_DELTA,
   // ****** END SET SESSION DEFAULTs ***********************************
 
   USTAT_AUTO_EMPTYHIST_TWO_TRANS,
@@ -2670,6 +2661,7 @@ enum DefaultConstants
   LOB_GC_LIMIT_SIZE,
 
   LOB_INPUT_LIMIT_FOR_BATCH,
+  LOB_LOCKING,
   // Should the DISK POOL be turned on when replicating the DDL using COPY DDL
   REPLICATE_DISK_POOL,
 
@@ -2757,7 +2749,6 @@ enum DefaultConstants
   // enable exeutil(explain, reorg, maintain...) output in rwrs mode.
   EXE_UTIL_RWRS,
 
-  MODE_SEABASE,
   SEABASE_CATALOG,
   HBASE_CATALOG,
   //  HBASE_DEFAULT_CHARSET,
@@ -2874,8 +2865,7 @@ enum DefaultConstants
 
   HBASE_MIN_BYTES_PER_ESP_PARTITION,
   HBASE_MAX_ESPS,
-
-
+  
 
   // for testing setjmp/longjmp compiler logic
   MEMORY_LIMIT_CMPCTXT_UPPER_KB,
@@ -2922,6 +2912,7 @@ enum DefaultConstants
 
   HBASE_DATA_BLOCK_ENCODING_OPTION,
   HBASE_COMPRESSION_OPTION,
+  HBASE_MEMSTORE_FLUSH_SIZE_OPTION,
   HQC_LOG,
   HQC_LOG_FILE, // specify the HQC log file name
   HYBRID_QUERY_CACHE,
@@ -2948,6 +2939,12 @@ enum DefaultConstants
   // this is used to change cache size of sequence numbers for a session.
   // It overwrites the cache size that was specified during sequence creation.
   TRAF_SEQUENCE_CACHE_SIZE,
+ 
+  // this is used to set the retry time if two concurrent update of sequence
+  // conflict, and how many times will retry
+  // by default it is 100, when you saw error 1583, you can try to increase
+  // this settings
+  TRAF_SEQUENCE_RETRY_TIMES,
 
   TRAF_LOAD_MAX_HFILE_SIZE,
 
@@ -3014,9 +3011,15 @@ enum DefaultConstants
   // In special cases, previous default value could be overridden. 
   // Internal use only or use only under trafodion supervision.
   TRAF_MAX_CHARACTER_COL_LENGTH_OVERRIDE,
-
   // set when metadata definition is to be read from hardcoded structs
   // and not from metadata. 
+
+  // set to limit the number of rows in scanner cache when we have very
+  // wide rows. If the rows are too large we may run into an OOM error
+  // since weuse HBASE_NUM_CACHE_ROWS_MIN(MAX) CQDs to calculate
+  // the number of rows
+  TRAF_MAX_ROWSIZE_IN_CACHE,
+
   TRAF_BOOTSTRAP_MD_MODE,
 
   UDR_DEBUG_FLAGS,
@@ -3291,11 +3294,32 @@ enum DefaultConstants
   BMO_MEMORY_LIMIT_UPPER_BOUND,
   BMO_MEMORY_ESTIMATE_RATIO_CAP,
 
+  // if OFF, binary/varbinary is not supported. It is treated as char/varchar.
+  // if ON,  binary is supported as table cols and in cast stmts.
+  // This is needed until binary/varbinary support is fully
+  // supported and externalized.
+  TRAF_BINARY_SUPPORT,
+
+  // If ON, binary is supported as returned datatype from a select stmt,
+  // otherwise returned as char/varchar.
+  TRAF_BINARY_OUTPUT,
+
+  // If ON, input params are typed as binary,
+  // otherwise typed as char/varchar.
+  TRAF_BINARY_INPUT,
+
+  // if ON, spj input/output params are typed as binary.
+  // Otherwise typed as char/varchar.
+  TRAF_BINARY_SPJ_SUPPORT,
+
   // if set, cleanse output of explain text by filtering values that
   // may not be deterministic on different systems.
   // Same as explain format: options 'c'
   // Used during dev regressions to cleanse explain output.
   EXPLAIN_OPTION_C,
+
+  // max length of hive binary datatype
+  HIVE_MAX_BINARY_LENGTH,
 
   // Threshold when TOPN sort becomes a regular sort
   GEN_SORT_TOPN_THRESHOLD,
@@ -3314,16 +3338,54 @@ enum DefaultConstants
 
   BMO_MEMORY_ESTIMATE_OUTLIER_FACTOR,
 
-  // Use the earlier implementation of HdfsScan via libhdfs
-  USE_LIBHDFS_SCAN,
-  
-  // This enum constant must be the LAST one in the list; it's a count,
-  // not an Attribute (it's not IN DefaultDefaults; it's the SIZE of it)!
+  // Use the earlier implementation of Hdfs access including LOB via libhdfs
+  USE_LIBHDFS,
+
+  // if set, make primary key columns non-nullable. ANSI specification.
+  // Default is ON.
+  TRAF_MAKE_PKEY_COLUMNS_NOT_NULL,
+
+  // if ON and there are dependent objects on the table, then
+  // create unique constraint instead of clustered primary key.
+  //
+  // Otherwise return error. Users will need to drop dependent objects and
+  // then recreate them after adding the primary key.
+  // Default is OFF.
+  TRAF_ALTER_ADD_PKEY_AS_UNIQUE_CONSTRAINT,
+
+  // if set, do not drop or create hbase objects.
+  // Internal cqd. Used during pkey alter/add
+  TRAF_NO_HBASE_DROP_CREATE,
+
+  // if set, ddl from Traf interface on Hive objects is supported.
+  TRAF_DDL_ON_HIVE_OBJECTS,
+
+  // If set to TRUE, CTAS on Hive object(Create and Insert...select) is processed in Hive.
+  // If set to FALSE, Create is done in Hive, and Insert...select is done in Traf.
+  // Default is OFF.
+  HIVE_CTAS_IN_NATIVE_MODE,
+
   // Size of byte[] in java when direct byteBuffer can't be used
   // Used to read compressed hdfs text files and to write
   // both compressed and uncompressed hdfs files
   HDFS_IO_INTERIM_BYTEARRAY_SIZE_IN_KB,
+  // Use BLOB column in LIBRARIES tables to store libraries.
+  USE_LIB_BLOB_STORE,
 
+  // When creating a Trafodion table like a partitioned Hive table
+  // use NO NULL attribute for partitin columns
+  HIVE_CREATE_TABLE_LIKE_PARTITION_NO_NULL,
+
+  CANCEL_QUERY_ALLOWED,
+
+  // Determines if a transaction needs to be started for select
+  // 0 - No transactions for SELECT
+  // 1 - Transaction started for SELECT .. FOR UPDATE
+  // 2 - Transaction started for SELECT with isolaton level other than skip conflict access 
+  BEGIN_TRANSACTION_FOR_SELECT, 
+
+  // This enum constant must be the LAST one in the list; it's a count,
+  // not an Attribute (it's not IN DefaultDefaults; it's the SIZE of it)!
   __NUM_DEFAULT_ATTRIBUTES
 };
 

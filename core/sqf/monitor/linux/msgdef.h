@@ -34,6 +34,7 @@
 // Compile options
 //#define DEBUGGING
 #define NO_OPEN_CLOSE_NOTICES
+#define EXCHANGE_CPU_SCHEDULING_DATA
 
 #define SERVICE_TAG      1
 #define INTERNAL_TAG     2
@@ -74,7 +75,7 @@
 #define MAX_NODE_MASKS   (MAX_NODES/MAX_NODE_BITMASK) // Node bit mask array size
 
 #define MAX_FAULT_ZONES  16 
-#define MAX_FILE_NAME    256
+#define MAX_FILE_NAME    1024
 #define MAX_KEY_NAME     64
 #define MAX_KEY_LIST     32
 #define MAX_NODE_LIST    64
@@ -88,7 +89,7 @@
 #define MAX_PROCINFO_LIST 64
 #define MAX_PROC_CONTEXT 5
 #define MAX_PROCESS_NAME MAX_KEY_NAME
-#define MAX_PROCESS_NAME_STR 12
+#define MAX_PROCESS_NAME_STR 13
 #define MAX_PROCESS_PATH 256
 #define MAX_PROCESSOR_NAME 128
 #define MAX_RECONN_PING_WAIT_TIMEOUT 5
@@ -104,6 +105,22 @@
 #define MAX_TM_HANDLES   0x00FFFFFF
 #define MAX_VALUE_SIZE   512
 #define MAX_VALUE_SIZE_INT 4096
+
+// Connect default 64 seconds
+#define CONNECT_WAIT_TIMEOUT_MSEC    1000
+#define CONNECT_WAIT_TIMEOUT_SEC        1
+#define CONNECT_RETRY_COUNT            64
+#define CONNECT_RETRY_COUNT_MAX       180
+// IO default 64 seconds
+#define EPOLL_IO_WAIT_TIMEOUT_MSEC   1000
+#define EPOLL_IO_WAIT_TIMEOUT_SEC       1
+#define EPOLL_IO_RETRY_COUNT           64
+#define EPOLL_IO_RETRY_COUNT_MAX      180
+
+// The following defines specify the default values for the HA
+// timers if the timer related environment variables are not defined.
+// Defaults to 60 second Watchdog process timer expiration
+#define WDT_KEEPALIVETIMERDEFAULT 60
 
 // Use STRCPY when the size of the source string is variable and unknown.
 // Safe strcpy - checks that destination has enough capacity to hold
@@ -152,6 +169,13 @@ typedef enum {
     PStartD_StartPersistDTM     // Event to PSD to start persistent processes
                                 // that require DTM
 } PStartDEvent_t;
+
+typedef enum {
+    AgentType_Undefined=0,
+    AgentType_Ambari,
+    AgentType_CM,
+    AgentType_MPI
+} AgentType_t;
 
 typedef enum {
     ConfigType_Undefined=0,                 // Invalid
@@ -222,14 +246,21 @@ typedef TcZoneType_t ZoneType;
 //       SQ_LocalIOToClient::serviceRequestSize and CReqQueue::svcReqType.
 typedef enum {
     ReqType_Close=1,                        // process closing server request
+    ReqType_DelProcessNs,                   // delete process
     ReqType_Dump,                           // dump process
     ReqType_Event,                          // send target processes an Event notice
     ReqType_Exit,                           // process is exiting
     ReqType_Get,                            // retrieve information from the registry
+    ReqType_InstanceId,                     // get Cluster Id and Instance Id
     ReqType_Kill,                           // stop and cleanup the identified process
     ReqType_MonStats,                       // get monitor statistics
     ReqType_Mount,                          // mount device associated with process    
+    ReqType_NameServerAdd,                  // add nameserver to configuration database
+    ReqType_NameServerDelete,               // delete nameserver from configuration database
+    ReqType_NameServerStart,                // start the identified nameserver
+    ReqType_NameServerStop,                 // stop the identified nameserver
     ReqType_NewProcess,                     // process is request server to be spawned
+    ReqType_NewProcessNs,                   // new process
     ReqType_NodeAdd,                        // add node to configuration database
     ReqType_NodeDelete,                     // delete node from configuration database
     ReqType_NodeDown,                       // take down the identified node
@@ -245,14 +276,13 @@ typedef enum {
     ReqType_PNodeInfo,                      // physical node information request 
     ReqType_ProcessInfo,                    // process information request
     ReqType_ProcessInfoCont,                // process information request (continuation)
+    ReqType_ProcessInfoNs,                  // process information request (monitor)
     ReqType_Set,                            // add configuration information to the registry 
     ReqType_Shutdown,                       // request cluster shutdown
+    ReqType_ShutdownNs,                     // request nameserver shutdown
     ReqType_Startup,                        // process startup notification
-    ReqType_Stfsd,                          // process stfsd request
     ReqType_TmLeader,                       // request to become the TM leader
     ReqType_TmReady,                        // request to indicate TM ready for transactions
-    ReqType_TmSync,                         // request to sync data across all TM's in cluster
-    ReqType_TransInfo,                      // request transaction enlistment information
     ReqType_ZoneInfo,                       // zone information request 
 
     ReqType_Invalid                         // marks the end of the request
@@ -266,23 +296,23 @@ typedef enum {
 //       SQ_LocalIOToClient::serviceReplySize.
 typedef enum {
     ReplyType_Generic=100,                  // general reply across message types
+    ReplyType_DelProcessNs,                 // reply with results
     ReplyType_Dump,                         // reply with dump info
     ReplyType_Get,                          // reply with configuration key/value pairs
+    ReplyType_InstanceId,                   // reply with Cluster Id and Instance Id
     ReplyType_MonStats,                     // reply with monitor statistics
     ReplyType_Mount,                        // reply with mount info
     ReplyType_NewProcess,                   // reply with new process information
+    ReplyType_NewProcessNs,                 // reply with new process information
     ReplyType_NodeInfo,                     // reply with info on list of nodes
     ReplyType_NodeName,                     // reply with results
     ReplyType_Open,                         // reply with open server information
     ReplyType_OpenInfo,                     // reply with list of opens for a process
     ReplyType_PNodeInfo,                    // reply with info on list of physical nodes
     ReplyType_ProcessInfo,                  // reply with info on list of processes
-    ReplyType_Stfsd,                        // reply with stfsd info
+    ReplyType_ProcessInfoNs,                // reply with info of process
     ReplyType_Startup,                      // reply with startup info
-    ReplyType_TmSync,                       // reply from unsolicited TmSync message
-    ReplyType_TransInfo,                    // reply with transaction enlistment process list
     ReplyType_ZoneInfo,                     // reply with info on list of zones
-
 
     ReplyType_Invalid                       // marks the end of the reply types,
                                             // add any new reply types before
@@ -302,7 +332,6 @@ typedef enum {
     MsgType_NodeDeleted,                    // node deleted from configuration notification
     MsgType_NodeDown,                       // node is down notification
     MsgType_NodeJoining,                    // node is joining notification
-    MsgType_NodePrepare,                    // node prepare notification
     MsgType_NodeQuiesce,                    // node quiesce notification (always followed by node down)
     MsgType_NodeUp,                         // node is up notification
     MsgType_Open,                           // process open notification
@@ -312,10 +341,6 @@ typedef enum {
     MsgType_Service,                        // request a service from the monitor
     MsgType_Shutdown,                       // system shutdown notification
     MsgType_SpareUp,                        // spare node is up notification
-    MsgType_TmRestarted,                    // DTM process restarted notification
-    MsgType_TmSyncAbort,                    // request to abort TM sync data previously received
-    MsgType_TmSyncCommit,                   // request to commit previously received TM sync data
-    MsgType_UnsolicitedMessage,             // Outgoing monitor msg expecting a reply 
 
     MsgType_Invalid                         // marks the end of the message
                                             // types, add any new message types 
@@ -347,6 +372,28 @@ struct Close_def
     char process_name[MAX_PROCESS_NAME];   // requesting process's name
     int  aborted;                          // Non-zero if close because of process abort
     int  mon;                              // Non-zero if monitor close
+};
+
+struct DelProcessNs_def
+{
+    int  nid;                               // requesting process's node id
+    int  pid;                               // requesting process id
+    Verifier_t verifier;                    // requesting process's verifier
+    char process_name[MAX_PROCESS_NAME];    // requesting process's name
+    int  target_nid;                        // Node id of processes to delete
+    int  target_pid;                        // Process id of process to delete
+    Verifier_t target_verifier;             // Process verifier of processes to delete
+    char target_process_name[MAX_PROCESS_NAME];    // Name of process to delete
+    bool target_abended;                    // True if process aborted
+};
+
+struct DelProcessNs_reply_def
+{
+    int  nid;                               // requesting process's node id
+    int  pid;                               // requesting process id
+    Verifier_t verifier;                    // requesting process's verifier
+    char process_name[MAX_PROCESS_NAME];    // requesting process's name
+    int  return_code;                       // mpi error code of error
 };
 
 struct Dump_def
@@ -439,6 +486,19 @@ struct Get_reply_def
     } list[MAX_KEY_LIST];
 };
 
+struct InstanceId_def
+{
+    int nid;                                // requesting process's node id
+    int pid;                                // requesting process id
+    Verifier_t verifier;                    // requesting process's verifier
+};
+
+struct InstanceId_reply_def
+{
+    int cluster_id;                         // this instance's cluster id
+    int instance_id;                        // this instance's instance id
+};
+
 struct Kill_def
 {
     int  nid;                               // requesting process's node id
@@ -480,6 +540,34 @@ struct Mount_reply_def
     int          return_code;               // mpi error code of spawn operation
 }; 
 
+struct NameServerAdd_def
+{
+    int  nid;                               // node id of requesting process
+    int  pid;                               // process id of requesting process
+    char node_name[MPI_MAX_PROCESSOR_NAME]; // Node's name
+};
+
+struct NameServerDelete_def
+{
+    int  nid;                               // node id of requesting process
+    int  pid;                               // process id of requesting process
+    char node_name[MPI_MAX_PROCESSOR_NAME]; // Node's name
+};
+
+struct NameServerStart_def
+{
+    int  nid;                               // node id of requesting process
+    int  pid;                               // process id of requesting process
+    char node_name[MPI_MAX_PROCESSOR_NAME]; // Node's name
+};
+
+struct NameServerStop_def
+{
+    int  nid;                               // node id of requesting process
+    int  pid;                               // process id of requesting process
+    char node_name[MPI_MAX_PROCESSOR_NAME]; // Node's name
+};
+
 struct NewProcess_def
 {
     int  nid;                               // zone or node id if TM type to start process on, 
@@ -502,7 +590,52 @@ struct NewProcess_def
     int  fill1;                             // filler to fill out struct
 };
 
+struct NewProcessNs_def
+{
+    int  nid;                               // node id
+    int  pid;                               // process id
+    Verifier_t verifier;                    // process verifier
+    char process_name[MAX_PROCESS_NAME];    // process name
+    PROCESSTYPE type;                       // Identifies the process handling catagory
+    int  parent_nid;                        // parent's node id
+    int  parent_pid;                        // parent's process id
+    Verifier_t parent_verifier;             // parent's process verifier
+    int  pair_parent_nid;                   // node id of real process pair parent process
+    int  pair_parent_pid;                   // process id of real process pair parent process
+    Verifier_t pair_parent_verifier;        // process id of real process pair parent process
+    int  priority;                          // Linux system priority
+    int  debug;                             // if non-zero, starts processing using GDB
+    int  backup;                            // if non-zero, starts process as backup
+    bool unhooked;                          // if hooked, parent process dies will trigger child process exits
+    bool nowait;                            // reply after local node initiates new process and send notice on completion
+    bool event_messages;                    // true if want event messages
+    bool system_messages;                   // true if want system messages
+    long long tag;                          // user defined tag to be sent in completion notice
+//    strId_t pathStrId;                      // program lookup path (string id)
+//    strId_t ldpathStrId;                    // library load path (string id)
+//    strId_t programStrId;                   // full path to object file (string id)
+    char path[MAX_SEARCH_PATH];             // process's object lookup path to program
+    char ldpath[MAX_SEARCH_PATH];           // process's library load path for program
+    char program[MAX_PROCESS_PATH];         // full path to object file
+    char port_name[MPI_MAX_PORT_NAME];      // mpi port name from MPI_Open_port
+    int  argc;                              // number of additional command line argument
+    char argv[MAX_ARGS][MAX_ARG_SIZE];      // array of additional command line arguments
+    char infile[MAX_PROCESS_PATH];          // if null then use monitor's infile
+    char outfile[MAX_PROCESS_PATH];         // if null then use monitor's outfile
+    struct timespec creation_time;          // creation time
+    int  fill1;                             // filler to fill out struct
+};
+
 struct NewProcess_reply_def
+{
+    int  nid;                               // node id of started process
+    int  pid;                               // internal process id of started process
+    Verifier_t verifier;                    // Process verifier
+    char process_name[MAX_PROCESS_NAME];    // process names assigned to started process
+    int  return_code;                       // mpi error code of spawn operation
+};
+
+struct NewProcessNs_reply_def
 {
     int  nid;                               // node id of started process
     int  pid;                               // internal process id of started process
@@ -864,6 +997,41 @@ struct ProcessInfo_reply_def
     bool more_data;                         // true if have additional process data
 };
 
+struct ProcessInfoNs_reply_def
+{
+    int  nid;                               // node id
+    int  pid;                               // process id
+    Verifier_t verifier;                    // process verifier
+    char process_name[MAX_PROCESS_NAME];    // process name
+    PROCESSTYPE type;                       // Identifies the process handling catagory
+    int   parent_nid;                       // parent's node id
+    int   parent_pid;                       // parent's process id
+    Verifier_t parent_verifier;             // parent's process verifier
+    int  pair_parent_nid;                   // node id of real process pair parent process
+    int  pair_parent_pid;                   // process id of real process pair parent process
+    Verifier_t pair_parent_verifier;        // process id of real process pair parent process
+    int  priority;                          // Linux system priority
+    int  backup;                            // if non-zero, starts process as backup
+    STATE state;                            // process's current state
+    bool unhooked;                          // if hooked, parent process dies will trigger child process exits
+    bool event_messages;                    // true if want event messages
+    bool system_messages;                   // true if want system messages
+    long long tag;                          // user defined tag to be sent in completion notice
+//    strId_t pathStrId;                      // program lookup path (string id)
+//    strId_t ldpathStrId;                    // library load path (string id)
+//    strId_t programStrId;                   // full path to object file (string id)
+    char path[MAX_SEARCH_PATH];             // process's object lookup path to program
+    char ldpath[MAX_SEARCH_PATH];           // process's library load path for program
+    char program[MAX_PROCESS_PATH];         // program file name
+    char port_name[MPI_MAX_PORT_NAME];      // mpi port name from MPI_Open_port
+    int  argc;                              // number of additional command line argument
+    char argv[MAX_ARGS][MAX_ARG_SIZE];      // array of additional command line arguments
+    char infile[MAX_PROCESS_PATH];          // if null then use monitor's infile
+    char outfile[MAX_PROCESS_PATH];         // if null then use monitor's outfile
+    struct timespec creation_time;          // creation time
+    int  return_code;                       // mpi error code of error
+};
+
 struct ProcessInfoCont_def
 {
     int  nid;                               // requesting process's node id
@@ -891,6 +1059,13 @@ struct Set_def
 };
 
 struct Shutdown_def
+{
+    int  nid;                               // requesting process's node id
+    int  pid;                               // requesting process id
+    ShutdownLevel level;                    // 0=normal, 1=fast or 2=crash
+};
+
+struct ShutdownNs_def
 {
     int  nid;                               // requesting process's node id
     int  pid;                               // requesting process id
@@ -931,24 +1106,6 @@ struct Startup_reply_def
     char fifo_stderr [MAX_PROCESS_PATH];
 };
 
-struct Stfsd_def
-{
-    int  nid;                               // Requester's node id
-    int  pid;                               // Requester's process id
-    int  tag;                               // Requester's tag
-    int  length;                            // The length in bytes used the data buffer
-    char data[MAX_STFSD_DATA];              // The data to be sent 
-};
-
-struct Stfsd_reply_def
-{
-    int  nid;                                // Replying STFSD's node id
-    int  pid;                                // Replying STFSD's process id
-    int  return_code;                        // If non-zero, error code
-    int  length;                             // The length in bytes of the data buffer
-    char data[MAX_STFSD_DATA];               // Reply data
-};
-
 struct TmLeader_def
 {
     int nid;                                // Requesting TM's node id
@@ -959,70 +1116,6 @@ struct TmReady_def
 {
     int nid;                                // Requesting TM's node id
     int pid;                                // Requesting TM's process id
-};
-
-struct TmRestarted_def
-{
-    int  nid;                               // Restarted TM's logical node id
-    int  pnid;                              // Restarted TM's physical node id
-    char node_name[MPI_MAX_PROCESSOR_NAME]; // Restarted TM's physical node name
-};
-
-struct TmSync_def
-{
-    int  nid;                               // Requesting TM's node id
-    int  pid;                               // Requesting TM's process id
-    int  tag;                               // Requesting TM's tag
-    int  length;                            // The length in bytes used the data buffer
-    char data[MAX_SYNC_DATA];               // The data to be sent to all TM's in the cluster
-};
-
-struct TmSync_reply_def
-{
-    int nid;                                // Replying TM's node id
-    int pid;                                // Replying TM's process id
-    int handle;                             // Request associated handle for sync completed notice
-    int return_code;                        // If non-zero, TM not excepting sync data
-};
-
-struct TmSyncNotice_def
-{
-    int nid[MAX_TM_SYNCS];                  // Owning TM's node id
-    int orig_count;                         // Number of originator tags
-    int orig_tag[MAX_TM_SYNCS];             // Originator tag (only valid for orig)
-    int orig_handle[MAX_TM_SYNCS];          // Originator handle (only valid for orig)
-    int count;                              // Number of handles returned
-    int handle[MAX_TM_SYNCS];               // Requests associated handle for sync completed notice
-};
-
-struct UnsolicitedTmSync_def
-{
-    int  nid;                               // Requesting TM's node id or target TM's node id
-    int  pid;                               // Requesting TM's process id or target  TM's process id
-    int  handle;                            // Request associated handle for sync completed notice
-    int  length;                            // The length in bytes used the data buffer
-    char data[MAX_SYNC_DATA];               // The data to be sent to all TM's in the cluster
-};
-
-struct TransInfo_def
-{ // Deprecated
-    int  nid;                               // Requesting process's node id
-    int  pid;                               // Requesting process id
-    char process_name[MAX_PROCESS_NAME];    // Name of process to list associated transactions
-                                            // If NULL then use trans-id to list assocaited process
-    _TM_Txid_External trans_id;             // Transaction ID of enlisted processes to list
-};
-
-struct TransInfo_reply_def
-{ // Deprecated
-    int  num_processes;                     // Number of process returned
-    struct 
-    {
-        int  nid;                           // Associated process's node id
-        int  pid;                           // Associated process's process id
-        _TM_Txid_External trans_id;         // Transiaction ID associated with process
-    } procs[MAX_PROC_LIST];
-    int  return_code;                       // Error returned to sender
 };
 
 struct ZoneInfo_def
@@ -1062,15 +1155,22 @@ struct request_def
         struct Change_def            change;
         struct Close_def             close;
         struct ProcessDeath_def      death;
+        struct DelProcessNs_def      del_process_ns;
         struct NodeDown_def          down;
         struct Dump_def              dump;
         struct Event_def             event;
         struct Event_Notice_def      event_notice;
         struct Exit_def              exit;
         struct Get_def               get;
+        struct InstanceId_def        instance_id;
         struct Mount_def             mount;
         struct Kill_def              kill;
+        struct NameServerAdd_def     nameserver_add;
+        struct NameServerDelete_def  nameserver_delete;
+        struct NameServerStart_def   nameserver_start;
+        struct NameServerStop_def    nameserver_stop;
         struct NewProcess_def        new_process;
+        struct NewProcessNs_def      new_process_ns;
         struct NodeAdd_def           node_add;
         struct NodeAdded_def         node_added;
         struct NodeChanged_def       node_changed;
@@ -1086,17 +1186,10 @@ struct request_def
         struct ProcessInfoCont_def   process_info_cont;
         struct Set_def               set;
         struct Shutdown_def          shutdown;
+        struct ShutdownNs_def        shutdown_ns;
         struct Startup_def           startup;
-#ifdef SQ_STFSD
-        struct Stfsd_def             stfsd;
-#endif
         struct TmLeader_def          leader;
         struct TmReady_def           tm_ready;
-        struct TmRestarted_def       tm_restart;
-        struct TmSync_def            tm_sync;
-        struct TmSyncNotice_def      tm_sync_notice;
-        struct TransInfo_def         trans_info;
-        struct UnsolicitedTmSync_def unsolicited_tm_sync;
         struct NodeUp_def            up;
         struct NodeQuiesce_def       quiesce;
         struct NodePrepare_def       prepare;
@@ -1113,24 +1206,22 @@ struct reply_def
     REPLYTYPE type;
     union
     {
+        struct DelProcessNs_reply_def  del_process_ns;
         struct Dump_reply_def          dump;
         struct Generic_reply_def       generic;
         struct Get_reply_def           get;
+        struct InstanceId_reply_def    instance_id;
         struct Mount_reply_def         mount;
         struct NewProcess_reply_def    new_process;
+        struct NewProcessNs_reply_def  new_process_ns;
         struct NodeInfo_reply_def      node_info;
         struct Open_reply_def          open;
         struct OpenInfo_reply_def      open_info;
         struct PNodeInfo_reply_def     pnode_info;
         struct ProcessInfo_reply_def   process_info;
+        struct ProcessInfoNs_reply_def process_info_ns;
         struct Startup_reply_def       startup_info;
-#ifdef SQ_STFSD
-        struct Stfsd_reply_def         stfsd;
-#endif
         int                            tm_seqnum;
-        struct TmSync_reply_def        tm_sync;
-        struct TransInfo_reply_def     trans_info;
-        struct TmSync_reply_def        unsolicited_tm_sync;
         struct Close_reply_def         close;
         struct MonStats_reply_def      mon_info;
         struct ZoneInfo_reply_def      zone_info;
@@ -1145,7 +1236,6 @@ struct message_def
     int reply_tag;
     union
     {
-        int                 handle;    // used only for TmSync notices
         struct request_def  request;
         struct reply_def    reply;
     } u;

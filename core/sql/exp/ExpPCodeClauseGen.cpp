@@ -2412,10 +2412,14 @@ ex_expr::exp_return_type ex_arith_sum_clause::pCodeGenerate(Space *space, UInt32
      (op1->getDatatype() > REC_MAX_NUMERIC))
     return ex_clause::pCodeGenerate(space, f);
 
+  if (! isAugmentedAssignOperation())
+     return ex_clause::pCodeGenerate(space, f);
+
   // The result should be the same as one of the operands.
   //
   Int32 firstOperand = isSameAttribute(dst, op1);
   Int32 secondOperand = isSameAttribute(dst, op2);
+  
   if(!firstOperand && !secondOperand)
     return ex_clause::pCodeGenerate(space, f);
 
@@ -4430,7 +4434,7 @@ ex_function_char_length::pCodeGenerate(Space *space, UInt32 f)
   PCIID branchToEnd = PCode::nullBranch(this, code, attrs);
 
   // Just return length if the string is fixed
-  if (attrs[1]->getDatatype() == REC_BYTE_F_ASCII) {
+  if (DFS2REC::isSQLFixedChar(attrs[1]->getDatatype())) {
     AML aml(PCIT::MBIN32S, PCIT::IBIN32S);
     OL ol(attrs[0]->getAtp(), attrs[0]->getAtpIndex(), attrs[0]->getOffset(),
           (Int32)attrs[1]->getLength());
@@ -4793,6 +4797,7 @@ ex_function_extract::pCodeGenerate(Space *space, UInt32 f)
   // fractional precision - this requires slightly more work.
   if ((attrs[1]->getDatatype() != REC_DATETIME) ||
       (getExtractField() > REC_DATE_MAX_SINGLE_FIELD) ||
+      (getExtractField()>=REC_DATE_CENTURY && getExtractField()<=REC_DATE_WOM) ||
       ((getExtractField() == REC_DATE_SECOND) && (attrs[1]->getScale() > 0)))
     return ex_clause::pCodeGenerate(space, f);
 

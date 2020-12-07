@@ -293,36 +293,6 @@ static Lng32 SQLCLI_Prepare_Setup_Post(
 	   }
 	   masterStats->setQueryType((Int16)rootTdb->getQueryType(),
                                 rootTdb->getSubqueryType());
-	   masterStats->exePriority() = (short)
-		currContext.getCliGlobals()->myPriority();
-	      
-	   if (currContext.getSessionDefaults()->getEspPriority() > 0)
-	      masterStats->espPriority() = (short)
-		  currContext.getSessionDefaults()->getEspPriority();
-	   else if (currContext.
-		       getSessionDefaults()->getEspPriorityDelta() != 0)
-	      masterStats->espPriority() = (short)
-		  (stmtStats->getMasterStats()->exePriority() +
-		   currContext.getSessionDefaults()->getEspPriorityDelta());
-	   else 
-              masterStats->espPriority() =
-		  masterStats->exePriority();
-
-	   if (currContext.getSessionDefaults()->getMxcmpPriority() > 0)
-              masterStats->cmpPriority() = (short)
-		  currContext.getSessionDefaults()->getMxcmpPriority();
-	   else if (currContext.
-	          getSessionDefaults()->getMxcmpPriorityDelta() != 0)
-              masterStats->cmpPriority() = (short)
-		  (masterStats->exePriority() +
-		   currContext.getSessionDefaults()->getMxcmpPriorityDelta());
-	   else 
-              masterStats->cmpPriority() =
-		  masterStats->exePriority();
-
-	   masterStats->fixupPriority() = (short)
-		currContext.getSessionDefaults()->getEspFixupPriorityDelta();
-	      
 	      // detect if this query is sequential at top. If
 	      // the root doesn't have an ESP exchange as its child,
 	      // then it is sequential at top. A FirstN operator could
@@ -484,16 +454,6 @@ static Lng32 CliEpilogue(CliGlobals * cliGlobals,
 
   if (isERROR(inRetcode)) 
     {
-      // if priority of master was changed for execution, 
-      // switch it back to its original priority.
-      // Do this only for root cli level.
-      if ((numOfCliCalls == 1) &&
-	  (cliGlobals->priorityChanged()))
-	{
-	  ComRtSetProcessPriority(cliGlobals->myPriority(), FALSE);
-	  cliGlobals->setPriorityChanged(FALSE);
-	}
-
       return SQLCLI_ReturnCode(cliGlobals->currContext(),inRetcode);
     }
 
@@ -2203,6 +2163,14 @@ Lng32 SQLCLI_ProcessRetryQuery(
                 } 
             }
         }
+
+      // if this is a udr/call statement and not a standalone statement, return an error
+      //The caller will need to reprepare the query so we have an updated tdb to execute.
+      // If it's a standalone statement, the statement will get reprepared and executed. 
+      if ((rootTdb->getUdrCount() > 0) && !stmt->isStandaloneQ())
+      {
+        return retcode;
+      }
     }
 
   AQRStatementInfo * aqrSI = NULL;
@@ -2828,17 +2796,6 @@ Lng32 SQLCLI_PerformTasks(
 	    }
 	}
 
-      // if priority of master was changed for execution and didn't get
-      // changed back to its original priority at the end of that stmt, 
-      // switch it back to its original priority now.
-      // Do this only for root cli level.
-      if ((currContext.getNumOfCliCalls() == 1) &&
-	  (cliGlobals->priorityChanged()))
-	{
-	  ComRtSetProcessPriority(cliGlobals->myPriority(), FALSE);
-	  cliGlobals->setPriorityChanged(FALSE);
-	}
-
       Lng32 retcode;
       retcode = CheckNOSQLAccessMode(*cliGlobals);
       if(isERROR(retcode)){
@@ -3071,17 +3028,7 @@ Lng32 SQLCLI_PerformTasks(
       if (isERROR(tretcode))
       {
 	return CliEpilogue(cliGlobals,statement_id,tretcode);
-    }
-
-      // if priority of master was changed for execution, 
-      // switch it back to its original priority.
-      // Do this only for root cli level.
-      if ((currContext.getNumOfCliCalls() == 1) &&
-	  (cliGlobals->priorityChanged()))
-	{
-	  ComRtSetProcessPriority(cliGlobals->myPriority(), FALSE);
-	  cliGlobals->setPriorityChanged(FALSE);
-	}
+      }
     }
 
   if (tasks & CLI_PT_SPECIAL_END_PROCESS)
@@ -6240,8 +6187,9 @@ Int32 SQLCLI_GetAuthState (
 
 Lng32 SQLCLI_GetRoleList(
    CliGlobals * cliGlobals,
-   Int32 &numRoles,
-   Int32 *&roleIDs)
+   Int32 &numEntries,
+   Int32 *& roleIDs,
+   Int32 *& granteeIDs)
 
 {
    Lng32 retcode = 0;
@@ -6254,7 +6202,7 @@ Lng32 SQLCLI_GetRoleList(
    ContextCli &currContext = *(cliGlobals->currContext());
    ComDiagsArea &diags = currContext.diags();
 
-   retcode = currContext.getRoleList(numRoles,roleIDs);
+   retcode = currContext.getRoleList(numEntries,roleIDs,granteeIDs);
 
    return CliEpilogue(cliGlobals, NULL, retcode);
 
@@ -6406,31 +6354,37 @@ Lng32 CopyOneStmtAttr (/*IN*/   Statement &stmt,
   }
   else if (attrName == SQL_ATTR_QUERY_TYPE)
   {
-    //for display query e.g. display select ...
-    //just return SUCCESS to suppress error message
-    if(stmt.isDISPLAY())
-    {
-      return SQLCLI_ReturnCode(&context, DISPLAY_DONE_WARNING);
-    }
     if (!stmt.getRootTdb())
     {
-      diags << DgSqlCode(-CLI_STMT_NOT_EXISTS);
-      return SQLCLI_ReturnCode(&context, -CLI_STMT_NOT_EXISTS);
+      //for display query e.g. display select ...
+      //just return SUCCESS to suppress error message
+      if(stmt.isDISPLAY())
+        {
+          return SQLCLI_ReturnCode(&context, DISPLAY_DONE_WARNING);
+        }
+      else
+        {
+          diags << DgSqlCode(-CLI_STMT_NOT_EXISTS);
+          return SQLCLI_ReturnCode(&context, -CLI_STMT_NOT_EXISTS);
+        }
     }
     *numeric_value = stmt.getRootTdb()->getQueryType();
   }
   else if (attrName == SQL_ATTR_SUBQUERY_TYPE)
   {
-    //for display query e.g. display select ...
-    //just return SUCCESS to suppress error message
-    if(stmt.isDISPLAY())
-    {
-      return SQLCLI_ReturnCode(&context, DISPLAY_DONE_WARNING);
-    } 
     if (!stmt.getRootTdb())
     {
-      diags << DgSqlCode(-CLI_STMT_NOT_EXISTS);
-      return SQLCLI_ReturnCode(&context, -CLI_STMT_NOT_EXISTS);
+      //for display query e.g. display select ...
+      //just return SUCCESS to suppress error message
+      if(stmt.isDISPLAY())
+        {
+          return SQLCLI_ReturnCode(&context, DISPLAY_DONE_WARNING);
+        }
+      else
+        {
+          diags << DgSqlCode(-CLI_STMT_NOT_EXISTS);
+          return SQLCLI_ReturnCode(&context, -CLI_STMT_NOT_EXISTS);
+        }
     }
     *numeric_value = stmt.getRootTdb()->getSubqueryType();
   }
@@ -6946,14 +6900,15 @@ Lng32 SQLCLI_SetDescPointers(/*IN*/         CliGlobals * cliGlobals,
 Lng32 SQLCLI_SwitchContext(
      /*IN*/ CliGlobals * cliGlobals,
      /*IN*/           SQLCTX_HANDLE   context_handle,
-     /*OUT OPTIONAL*/ SQLCTX_HANDLE * prev_context_handle)
+     /*OUT OPTIONAL*/ SQLCTX_HANDLE * prev_context_handle,
+     /*IN */    bool allowSwitchBackToDefault )
 {
   Lng32 retcode = SUCCESS;
 
   ContextCli   & currContext = *(cliGlobals->currContext());
   ComDiagsArea & diags       = currContext.diags();
 
-  if (context_handle == cliGlobals->getDefaultContext()->getContextHandle())
+  if (!allowSwitchBackToDefault && (context_handle == cliGlobals->getDefaultContext()->getContextHandle()))
   {
      diags << DgSqlCode(-CLI_DEFAULT_CONTEXT_NOT_ALLOWED);
      return SQLCLI_ReturnCode(&currContext,-CLI_DEFAULT_CONTEXT_NOT_ALLOWED);
@@ -7138,13 +7093,15 @@ Lng32 SQLCLI_Xact(/*IN*/ CliGlobals * cliGlobals,
       }
     break;
 
-    case SQLTRANS_BEGIN_WITH_DP2_XNS:
+    case SQLTRANS_SUSPEND:
       {
-	if (! (currContext.getTransaction()->xnInProgress()))
-	  {
-	    currContext.getTransaction()->beginTransaction();
-	    currContext.getTransaction()->setDp2Xns(TRUE);
-	  }
+        currContext.getTransaction()->suspendTransaction();
+      }
+    break;
+
+    case SQLTRANS_RESUME:
+      {
+        currContext.getTransaction()->resumeTransaction();
       }
     break;
 
@@ -8088,6 +8045,21 @@ Lng32 SQLCLI_GetSecInvalidKeys(CliGlobals *cliGlobals,
   return retcode;
 }
 
+Lng32 SQLCLI_SetLobLock(CliGlobals *cliGlobals,
+                        /* IN */    char *lobLockId
+                        )
+{
+  return cliGlobals->currContext()->setLobLock(lobLockId);
+}
+Lng32 SQLCLI_CheckLobLock(CliGlobals *cliGlobals,
+                        /* IN */    char *lobLockId,
+                        /*OUT */ NABoolean *found
+                        )
+{  
+  Int32 retcode = 0;
+  retcode = cliGlobals->currContext()->checkLobLock(lobLockId, found);
+  return retcode;
+}
 Lng32 SQLCLI_GetStatistics2(CliGlobals *cliGlobals,
             /* IN */  	short statsReqType,
 	    /* IN */  	char *statsReqStr,
@@ -8339,6 +8311,10 @@ Lng32 SQLCLI_LOBcliInterface
   short schNameLen = 0;
   char schName[512];
   char logBuf[4096];
+  Int64 inputValues[5];
+  Lng32 inputValuesLen = 0;
+  Int64 rowsAffected = 0;
+
   lobDebugInfo("In LobCliInterface",0,__LINE__,lobTrace);
   if (inLobHandle)
     {
@@ -8373,7 +8349,7 @@ Lng32 SQLCLI_LOBcliInterface
   lobDebugInfo(logBuf,0,__LINE__,lobTrace);
 
   char * query = new(currContext.exHeap()) char[4096];
-
+  char stmtName[200];
   if (outLobHandleLen)
     *outLobHandleLen = 0;
 
@@ -8412,10 +8388,9 @@ Lng32 SQLCLI_LOBcliInterface
       {
 	strcpy(query, "set transaction autocommit on;");
 	cliRC = cliInterface->executeImmediate(query);
-
-	if (cliRC < 0)
-	    goto error_return;
-
+        if (cliRC < 0)
+          goto error_return;
+        
 	cliRC = 0;
       }
       break;
@@ -8522,17 +8497,21 @@ Lng32 SQLCLI_LOBcliInterface
     case LOB_CLI_INSERT:
       {
 	// insert into lob descriptor handle table
-	str_sprintf(query, "select syskey from (insert into table(ghost table %s) values (%ld, 1, %ld)) x",
-		    lobDescHandleName, descPartnKey, (dataLen ? *dataLen : 0));
+        str_sprintf(query, "select syskey from (insert into table(ghost table %s) values (%ld, 1, %ld)) x",
+                    lobDescHandleName, descPartnKey, (dataLen ? *dataLen : 0));
+                
+		   
         lobDebugInfo(query,0,__LINE__,lobTrace);
 	// set parserflags to allow ghost table
 	currContext.setSqlParserFlags(0x1);
 	
-	Int64 descSyskey = 0;
+        Int64 descSyskey = 0;
 	Lng32 len = 0;
-	cliRC = cliInterface->executeImmediate(query,
+     
+        cliRC = cliInterface->executeImmediate(query,
 					       (char*)&descSyskey, &len, FALSE);
-
+        if (cliRC < 0)
+          goto error_return;
 	currContext.resetSqlParserFlags(0x1);
 
 	if (cliRC < 0)
@@ -9131,8 +9110,9 @@ Lng32 SQLCLI_LOBcliInterface
       tempCliRC = cliInterface->executeImmediate(query);
       if (tempCliRC < 0)
 	cliRC = tempCliRC;
+    
     }
-
+ 
   NADELETEBASIC(query, currContext.exHeap());
 
   if (cliRC < 0)
@@ -9382,7 +9362,7 @@ Lng32 SQLCLI_LOB_GC_Interface
       ExRaiseSqlError(currContext.exHeap(), &da, 
                       (ExeErrorCode)(8442), NULL, &cliRC    , 
                       &rc, NULL, (char*)"Lob GC call",
-                      getLobErrStr(rc));
+		      getLobErrStr(rc), (char*)getSqlJniErrorStr());
       // TBD When local transaction support is in
       // rollback all the updates to the lob desc chunks file too. 
       // return with warning
@@ -9451,7 +9431,7 @@ Lng32 SQLCLI_LOBddlInterface
   ComDiagsArea & diags       = currContext.diags();
 
   ComDiagsArea * myDiags = NULL;
-
+  NABoolean useLibHdfs = currContext.getSessionDefaults()->getUseLibHdfs();
   char logBuf[4096];
   lobDebugInfo("In LOBddlInterface",0,__LINE__,lobTrace);
   ExeCliInterface *cliInterface = NULL;
@@ -9471,23 +9451,41 @@ Lng32 SQLCLI_LOBddlInterface
   char * query = new(currContext.exHeap()) char[4096];
   char *hdfsServer = new(currContext.exHeap()) char[256];
   strcpy(hdfsServer,lobHdfsServer);
+  Int32 rc = 0;
   switch (qType)
     {
     case LOB_CLI_CREATE:
+    case LOB_CLI_ALTER :
       {
-	// create lob metadata table
-	str_sprintf(query, "create ghost table %s (lobnum smallint not null, storagetype smallint not null, location varchar(4096) not null, column_name varchar(256 bytes) character set utf8, primary key (lobnum)) ",lobMDName);
-	 lobDebugInfo(query,0,__LINE__,lobTrace);
+       
+        // create lob metadata table
+        str_sprintf(query, "create ghost table %s (lobnum smallint not null, storagetype smallint not null, location varchar(4096) not null, column_name varchar(256 bytes) character set utf8, primary key (lobnum)) ",lobMDName);
+        lobDebugInfo(query,0,__LINE__,lobTrace);
 
-	// set parserflags to allow ghost table
-	currContext.setSqlParserFlags(0x1);
+        // set parserflags to allow ghost table
+        currContext.setSqlParserFlags(0x1);
 	
-	cliRC = cliInterface->executeImmediate(query);	
-	currContext.resetSqlParserFlags(0x1);
+        cliRC = cliInterface->executeImmediate(query);	
+        currContext.resetSqlParserFlags(0x1);
 	
-	if (cliRC < 0)
-	    goto error_return;
-	
+        if (cliRC < 0)
+          {
+            ComDiagsArea *tempDiags = ComDiagsArea::allocate(currContext.exHeap());
+            cliInterface->retrieveSQLDiagnostics(tempDiags);
+            if (tempDiags->containsError(-CAT_TRAFODION_OBJECT_EXISTS))
+              {
+                if (qType ==LOB_CLI_ALTER)
+                  {
+                    //Clear the diags . This table already has a lob column
+                    //So no need to create an MD table. Just continue
+                    cliInterface->clearGlobalDiags();
+                    tempDiags->decrRefCount();
+                  }
+              }
+            else
+              goto error_return;
+          }
+          
 	// populate the lob metadata table
 	for (Lng32 i = 0; i < numLOBs; i++)
 	  {
@@ -9510,19 +9508,18 @@ Lng32 SQLCLI_LOBddlInterface
 
         //Initialize LOB interface 
         
-        Int32 rc= ExpLOBoper::initLOBglobal(exLobGlob,currContext.exHeap(),&currContext,hdfsServer,hdfsPort);
-        if (rc)
+        exLobGlob = ExpLOBoper::initLOBglobal(currContext.exHeap(), &currContext, useLibHdfs);
+        if (exLobGlob == NULL) 
           {
-            cliRC = 0;
+            cliRC = -1;
             ComDiagsArea * da = &diags;
             ExRaiseSqlError(currContext.exHeap(), &da, 
 			    (ExeErrorCode)(8442), NULL, &cliRC    , 
 			    &rc, NULL, (char*)"ExpLOBInterfaceCreate",
-
-			    getLobErrStr(rc));
+		            getLobErrStr(rc), (char*)getSqlJniErrorStr());
             goto non_cli_error_return;
           }
-          
+
 	for (Lng32 i = 0; i < numLOBs; i++)
 	  {
 	    // create lob data tables
@@ -9533,13 +9530,12 @@ Lng32 SQLCLI_LOBddlInterface
 	    
 	    if (rc)
 	      {
-		cliRC = 0;
+		cliRC = -1;
 		ComDiagsArea * da = &diags;
 		ExRaiseSqlError(currContext.exHeap(), &da, 
 			    (ExeErrorCode)(8442), NULL, &cliRC    , 
 			    &rc, NULL, (char*)"ExpLOBInterfaceCreate",
-
-			    getLobErrStr(rc));
+		            getLobErrStr(rc), (char*)getSqlJniErrorStr());
 		goto non_cli_error_return;
 	      }
 	    
@@ -9627,15 +9623,15 @@ Lng32 SQLCLI_LOBddlInterface
         //above tables . 
         //Initialize LOB interface 
        
-        Int32 rc= ExpLOBoper::initLOBglobal(exLobGlob,currContext.exHeap(),&currContext,hdfsServer,hdfsPort);
-        if (rc)
+        exLobGlob = ExpLOBoper::initLOBglobal(currContext.exHeap(), &currContext, useLibHdfs);
+        if (exLobGlob == NULL) 
           {
-            cliRC = 0;
+            cliRC = -1;
             ComDiagsArea * da = &diags;
             ExRaiseSqlError(currContext.exHeap(), &da, 
 			    (ExeErrorCode)(8442), NULL, &cliRC    , 
 			    &rc, NULL, (char*)"ExpLOBInterfaceCreate",
-			    getLobErrStr(rc));
+		            getLobErrStr(rc), (char*)getSqlJniErrorStr());
             goto non_cli_error_return;
 	      
           }
@@ -9653,7 +9649,7 @@ Lng32 SQLCLI_LOBddlInterface
 		ExRaiseSqlError(currContext.exHeap(), &da, 
 			    (ExeErrorCode)(8442), NULL, &cliRC    , 
 			    &rc, NULL, (char*)"ExpLOBInterfaceDrop  ",
-			    getLobErrStr(rc));
+		            getLobErrStr(rc), (char*)getSqlJniErrorStr());
 		goto non_cli_error_return;
               }
           }//for
@@ -9676,16 +9672,15 @@ Lng32 SQLCLI_LOBddlInterface
            goto error_return;
 
 	//Initialize LOB interface 
-        
-        Int32 rc= ExpLOBoper::initLOBglobal(exLobGlob,currContext.exHeap(),&currContext,hdfsServer,hdfsPort);
-        if (rc)
+        exLobGlob = ExpLOBoper::initLOBglobal(currContext.exHeap(), &currContext, useLibHdfs);
+        if (exLobGlob == NULL) 
           {
-            cliRC = 0;
+            cliRC = -1;
             ComDiagsArea * da = &diags;
             ExRaiseSqlError(currContext.exHeap(), &da, 
 			    (ExeErrorCode)(8442), NULL, &cliRC    , 
                             &rc, NULL, (char*)"ExpLOBInterfaceCreate",
-                            getLobErrStr(rc));
+		            getLobErrStr(rc), (char*)getSqlJniErrorStr());
             goto non_cli_error_return;	      
           }
 	// drop descriptor table
@@ -9703,7 +9698,7 @@ Lng32 SQLCLI_LOBddlInterface
 		ExRaiseSqlError(currContext.exHeap(), &da, 
 			    (ExeErrorCode)(8442), NULL, &cliRC    , 
 			    &rc, NULL, (char*)"ExpLOBInterfaceDrop  ",
-			    getLobErrStr(rc));
+		            getLobErrStr(rc), (char*)getSqlJniErrorStr());
 		goto non_cli_error_return;
 	      }
 	    
@@ -9840,7 +9835,8 @@ Lng32 SQLCLI_LOBddlInterface
       myDiags->decrRefCount();
     }
  non_cli_error_return:
-  ExpLOBinterfaceCleanup(exLobGlob);
+  if (exLobGlob != NULL)
+     ExpLOBoper::deleteLOBglobal(exLobGlob, currContext.exHeap());
   NADELETEBASIC(query, currContext.exHeap());
   NADELETEBASIC(hdfsServer,currContext.exHeap());
   delete cliInterface;
@@ -10503,9 +10499,9 @@ static Lng32 SeqGenCliInterfaceUpdAndValidateMulti(
       cliRC = cqdCliInterface->holdAndSetCQD("traf_no_dtm_xn", "ON");
     }
 
-  Lng32 numTries = 0;
+  Lng32 numTries = 0, maxRetryNum = sga->getSGRetryNum();
   NABoolean isOk = FALSE;
-  while ((NOT isOk) && (numTries < 10))
+  while ((NOT isOk) && (numTries < maxRetryNum))
     {
       if (startLocalXn)
         {
@@ -10513,7 +10509,7 @@ static Lng32 SeqGenCliInterfaceUpdAndValidateMulti(
           cliRC = cqdCliInterface->beginWork();
           if (cliRC < 0)
             {
-              if (myDiags != NULL)
+              if (myDiags == NULL)
                  myDiags = ComDiagsArea::allocate(exHeap);
               cqdCliInterface->retrieveSQLDiagnostics(myDiags);
               diags.mergeAfter(*myDiags);
@@ -10572,8 +10568,11 @@ static Lng32 SeqGenCliInterfaceUpdAndValidateMulti(
         }
       
       numTries++;
-      
-      DELAY(100 + numTries*25);
+      Lng32 delayTime = 100 + numTries*25 + rand()%10; 
+      if( delayTime < 1000)   //MAX is 1 second
+          DELAY(delayTime);
+      else
+          DELAY( 900 + rand() % 100);
     }
 
     // could not update it after 10 tries. Return error.

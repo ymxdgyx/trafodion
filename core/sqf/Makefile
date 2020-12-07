@@ -312,7 +312,7 @@ PKG_REGRESS_TAR ?= "../../${DISTRIBUTION_DIR}/${PKG_PROD}-regress.tgz"
 SEAMONSTER_TAR ?= "seamonster_${SQ_BUILD_TYPE}-src.tar.gz"
 
 #	Targets to tar/gzip the tree
-package: pkglist-files pkglist-symlinks tmp/sqenv.sh
+package: pkglist-files pkglist-symlinks tmp/sqenv.sh conf/dcs conf/rest
 	mkdir -p ../../${DISTRIBUTION_DIR}
 	chmod o-rwx $(PKG_BIN_DIRS)
 	chmod -R o-rwx $(PKG_BIN_OBJS)
@@ -335,10 +335,18 @@ NOTICE: ../../licenses/NOTICE-server
 	cd $(@D) && $(MAKE) $(@F)
 
 rest-${TRAFODION_VER}:
-	ln -s ../rest/target/$@/$@ $@
+	ln -sf ../rest/target/$@/$@ $@
+
+conf/rest: rest-${TRAFODION_VER}
+	mkdir -p $@
+	cp -f rest-${TRAFODION_VER}/conf/* $@/
 
 dcs-${TRAFODION_VER}:
-	ln -s ../../dcs/target/$@/$@ $@
+	ln -sf ../../dcs/target/$@/$@ $@
+
+conf/dcs: dcs-${TRAFODION_VER}
+	mkdir -p $@
+	cp -f dcs-${TRAFODION_VER}/conf/* $@/
 
 tmp/sqenv.sh:
 	@if [ ! -d tmp ]; then mkdir tmp; fi
@@ -370,7 +378,7 @@ packageinstaller:
 	chmod +x $(PKG_BIN)
 
 srcpackage:
-	-rm etc/ms.env
+	-rm $(TRAF_VAR)/ms.env
 	tar chzf ${SRC_PKG_TAR} -X build-scripts/package.exclude -X build-scripts/package.exclude.$(SQ_MBTYPE) .
 
 #	Targets to tar/gzip the regression tree
@@ -387,7 +395,7 @@ package-dcs:
 
 #	Targets to tar/gzip the self installer with sources
 srcpackagebin:
-	-rm etc/ms.env
+	-rm $(TRAF_VAR)/ms.env
 	cat $(TRAF_HOME)/sql/scripts/sqinstall > $(SRC_PKG_BIN)
 	echo "__ARCHIVE_BELOW__" >> $(SRC_PKG_BIN)
 	tar chzf - -X build-scripts/package.exclude -X build-scripts/package.exclude.$(SQ_MBTYPE) . >> $(SRC_PKG_BIN)

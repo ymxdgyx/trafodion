@@ -34,7 +34,7 @@ function Usage {
     echo "Usage: $0 [ -d <directory> | -q | -r | -h  ]"
     echo 
     echo "-d        Head node directory where the users cluster core files are to be moved"
-    echo "          The default location is \$TRAF_HOME/logs"
+    echo "          The default location is \$TRAF_LOG"
     echo "-q        Quiet mode (no prompts)"
     echo "-r        Remove all of a users cluster core files (excluding head node)"
     echo "-h        Help"
@@ -93,7 +93,7 @@ declare -i SQ_REMOVE=0
 declare -i ERR_FLAG=0
 head=`headnode`
 current=`uname -n`
-to_path=$TRAF_HOME/logs
+to_path=$TRAF_LOG
 
 GetOpts $@
 
@@ -134,7 +134,7 @@ fi
 # The following can be used to pull the database locations from the sqconfig file,
 # which assumes that the file is correctly configured. Note, that if used the zero-based
 # node calculation should be un-commented from the below "if" statement.
-#dirlist=`grep database $TRAF_HOME/sql/scripts/sqconfig | /bin/gawk '{print $2"$"$3"/"$1}'; $SQ_PDSH -a "find -L $TRAF_HOME/sql -name core\.\* | /bin/gawk -F\/core '{print \\\$1}' | uniq" | /bin/gawk '{sub(":",""); print substr($1,2)"$"$2}'`
+#dirlist=`grep database $TRAF_CONF/sqconfig | /bin/gawk '{print $2"$"$3"/"$1}'; $SQ_PDSH -a "find -L $TRAF_HOME/sql -name core\.\* | /bin/gawk -F\/core '{print \\\$1}' | uniq" | /bin/gawk '{sub(":",""); print substr($1,2)"$"$2}'`
 
 MY_NODES_PRM=" -a "
 if [ -n "$MY_NODES" ];then

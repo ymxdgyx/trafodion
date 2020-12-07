@@ -457,6 +457,7 @@ public:
   , SYNTH_PREC_FLOAT
   , SYNTH_PREC_INTERVAL		// > Numeric (ANSI 6.15, multiplication)
   , SYNTH_PREC_DATETIME		// > Interval (ANSI 6.14, addition)
+  , SYNTH_PREC_BINARY
   };
 
   virtual NAType::SynthesisPrecedence getSynthesisPrecedence() const
@@ -521,6 +522,11 @@ public:
   // Print function for debugging
   // ---------------------------------------------------------------------
   virtual void print(FILE* ofd = stdout, const char* indent = DEFAULT_INDENT);
+
+  // ---------------------------------------------------------------------
+  // Display function for debugging
+  // ---------------------------------------------------------------------
+  void display();
 
   // ---------------------------------------------------------------------
   // A method for generating the hash key.

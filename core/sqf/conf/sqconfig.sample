@@ -1,0 +1,141 @@
+# @@@ START COPYRIGHT @@@
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+# @@@ END COPYRIGHT @@@
+#
+# A sample sqconfig file
+#
+################################################################
+#
+# The following section is used to specify the:
+#   list of logical nodes and the physical nodes where they are hosted,
+#   the processor cores and corresponding logical processors, and
+#   the roles of each logica node.
+#
+# A logical node can have the following SQ roles:
+#  - connection
+#  - aggregation
+#  - storage
+#
+# You must:
+#  - specify all the processor cores in a physical node
+#  - specify the roles for each logical node
+#
+# On a dev env, you can use '_virtualnodes <num nodes>' to 
+# specify the number of virtual nodes.
+#
+################################################################
+
+begin node
+
+node-id=0;node-name=n001.mydomain;cores=0-7;processors=8;roles=connection,aggregation,storage
+node-id=1;node-name=n002.mydomain;cores=0-7;processors=8;roles=connection,aggregation,storage
+node-id=2;node-name=n003.mydomain;cores=0-7;processors=8;roles=connection,aggregation,storage
+node-id=3;node-name=n004.mydomain;cores=0-7;processors=8;roles=connection,aggregation,storage
+node-id=4;node-name=n005.mydomain;cores=0-7;processors=8;roles=connection,aggregation,storage
+node-id=5;node-name=n006.mydomain;cores=0-7;processors=8;roles=connection,aggregation,storage
+
+end node
+
+# Note: There must be at minimum one name server which maps to the first node
+# in the node section above, i.e., node-id=0
+begin name-server
+nodes=n001.mydomain,n002.mydomain
+end name-server
+
+###############################################################################
+#
+# Section to configure persistent processes (see sqconfig.persist file)
+#
+###############################################################################
+
+
+###############################################################################
+# 
+# Note: You could use '%' as the first character on the line followed by
+#       any SQ shell command. All the text would be passed verbatim.
+#
+###############################################################################
+#
+# Section to configure Floating IP (Optional).
+#
+# This section needs to configured to ensure HPDCS(HP Database Connectivity Services)
+# and BDR(Bulk Data Replicator) services are available after the failure of the node
+# in which these services run.
+#
+# Usually, HPDCS is available via $MXOAS process.
+# BDR Services is always available via $ZBDR process.   
+#
+# floating_ip_node_id : Preferably, a Logical Node id with roles set to connection only.
+#                       If no such node available, any logical node with roles set to connection
+#                       along with other roles.
+#
+# floating_ip_failover_node_id : 
+#                       Preferably, a Logical Node id different than the floating_ip_node_id 
+#                       above with roles set to connection only.
+#                       If no such node available, any logical node with roles set to connection
+#                       along with other roles.
+# 
+# process=<process_name>;interface=<interface>;external-ip=<ip_address>
+# process=<process_name>;interface=<interface>;interna-ip=<ip_address>
+#
+# process               Name of the HPDCS process ($MXOAS) that is allowed to register the
+#                       floating ip address to the node. 
+#
+# external-ip           Floating (external) IP address used by the clients to avail HPDCS 
+#                       and BDR services.
+#
+# internal-ip           Floating (Internal) IP address used by the clients hosted on the 
+#                       same SQ cluster to avail HPDCS.
+#
+# interface             Ethernet interfaces to be used to register the floating ip addresses
+#
+# floating_ip section should be before the bdr section in this file
+#
+# The  following are sample values - please update as appropriate
+#
+###############################################################################
+
+begin floating_ip
+process=$MXOAS;interface=eth1;external-ip=xx.xxx.xxx.xx
+process=$MXOAS;interface=eth0;internal-ip=xxx.xxx.xxx.xxx
+floating_ip_node_id  1
+floating_ip_failover_node_id 0
+end floating_ip
+
+###############################################################################
+#
+# Overflow directories for ssd and hdd. 
+#
+#    Format: <overflow-type> <directory>
+#
+#    Where:
+#
+#       <overflow-type> is one of the following:
+#
+#          hdd
+#          ssd
+#
+#       <directory>        - is a valid directory path
+#
+###############################################################################
+begin overflow
+hdd $TRAF_HOME/tmp
+#ssd /ssd/directory
+end overflow

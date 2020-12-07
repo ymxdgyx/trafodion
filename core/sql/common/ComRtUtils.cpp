@@ -644,26 +644,6 @@ NABoolean ComRtGetValueFromFile (const char * envvar, char * valueBuffer,
 
 // -----------------------------------------------------------------------
 //
-// ComRtGetJulianFromUTC()
-//
-// This function converts a unix-epoch timespec, which is based on midnight
-// GMT, the morning of Jan 1, 1970 to a JulianTimestamp, which is based on
-// noon GMT, the day of Jan 1, 4713 B.C.  The constant 2440588 represents
-// the number of whole days between these two dates.  The constant 86400 is
-// the number of seconds per day.  The 43200 is number of seconds in a half
-// day and is subtracted to account for the JulianDate starting at noon.
-// The 1000000 constant converts seconds to microseconds, and the 1000 is
-// to convert the nanosecond part of the unix timespec to microseconds. The
-// JulianTimesamp returned is in microseconds so it can be used directly
-// with the Guardian INTERPRETTIMESTAMP function.
-Int64 ComRtGetJulianFromUTC(timespec ts)
-{
-  return (((ts.tv_sec  + (2440588LL * 86400LL) - 43200LL) * 1000000LL)
-                + (ts.tv_nsec / 1000)) ;
-}
-
-// -----------------------------------------------------------------------
-//
 // ComRtGetProgramInfo()
 //
 // Outputs:
@@ -723,15 +703,6 @@ Lng32 ComRtGetProgramInfo(char * pathName,    /* out */
   return retcode;
 }
 
-Lng32 ComRtGetProcessPriority(Lng32  &processPriority /* out */)
-{
-  Lng32 retcode = 0;
-
-  processPriority = -1;
-
-  return retcode;
-}
-
 Lng32 ComRtGetProcessPagesInUse(Int64 &pagesInUse /* out */)
 {
     pagesInUse = -1;
@@ -767,15 +738,6 @@ Lng32 ComRtGetProcessCreateTime(short  *cpu, /* cpu */
   return retcode;
 }
 
-
-
-Lng32 ComRtSetProcessPriority(Lng32 priority,
-			     NABoolean isDelta)
-{
-  short rc = 0;
-
-  return rc;
-}
 
 
 Lng32 ComRtGetIsoMappingEnum()
@@ -1075,11 +1037,10 @@ Int16 getBDRClusterName(char *bdrClusterName)
   return error;
 }
  
-SB_Phandle_Type *get_phandle_with_retry(char *pname, short *fserr)
+int get_phandle_with_retry(char *pname, SB_Phandle_Type *phandle)
 {
   Int32 retrys = 0;
   int lv_fserr = FEOK;
-  SB_Phandle_Type *phandle = NULL;
   const Int32 NumRetries = 10;
   timespec retryintervals[NumRetries] = {
                                {  0, 10*1000*1000 }  // 10 ms
@@ -1096,7 +1057,7 @@ SB_Phandle_Type *get_phandle_with_retry(char *pname, short *fserr)
 
   for (;;)
   {
-    phandle = msg_get_phandle (pname, &lv_fserr);
+    lv_fserr = XFILENAME_TO_PROCESSHANDLE_(pname, strlen(pname), phandle);
     if (retrys >= NumRetries)
       break;
     if ((lv_fserr == FEPATHDOWN) ||
@@ -1105,11 +1066,7 @@ SB_Phandle_Type *get_phandle_with_retry(char *pname, short *fserr)
     else
       break;
   }
-
-  if (fserr)
-    *fserr = (short) lv_fserr;
-
- return phandle;
+  return lv_fserr;
 }
 
 // A function to return the string "UNKNOWN (<val>)" which can be
@@ -1122,4 +1079,27 @@ const char *ComRtGetUnknownString(Int32 val)
 {
   sprintf(ComRtGetUnknownString_Buf, "UNKNOWN (%d)", (int) val);
   return &(ComRtGetUnknownString_Buf[0]);
+}
+
+
+pid_t ComRtGetConfiguredPidMax()
+{
+   FILE *fd_pid_max;
+   char buffer[100];
+   size_t bytesRead = 0;
+   pid_t pid_max = 0;
+
+   fd_pid_max = fopen("/proc/sys/kernel/pid_max", "r");
+   if (fd_pid_max != NULL) {
+      bytesRead = fread(buffer, 1, sizeof(buffer)-1, fd_pid_max);
+      if (ferror(fd_pid_max))
+         assert(false); 
+      if (feof(fd_pid_max))
+         clearerr(fd_pid_max);
+      buffer[bytesRead] = '\0';
+      pid_max = atoi(buffer);
+      fclose(fd_pid_max);
+      return pid_max;
+   } 
+   return 0;
 }

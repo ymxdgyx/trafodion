@@ -46,9 +46,12 @@ LIBSX	+= -lrt
 # need -lsqlite3 for SQLite
 LIBSX	+=  -lsqlite3
 
+# need -lpthread starting on CentOS7
+LIBSX	+=  -lpthread  
+
 PROGS		= $(TRAFCONF)
 
-OBJTRAFCONFIG		= $(OUTDIR)/trafconfig.o \
+OBJTRAFCONFIG	= $(OUTDIR)/trafconfig.o \
 		  $(OUTDIR)/tcdb.o \
 		  $(OUTDIR)/tcdbstore.o \
 		  $(OUTDIR)/tclog.o \
@@ -57,11 +60,12 @@ OBJTRAFCONFIG		= $(OUTDIR)/trafconfig.o \
 
 #		  $(OUTDIR)/tcdbmysql.o
 
-OBJTRAFCONF		= $(OUTDIR)/trafconf.o \
+OBJTRAFCONF	= $(OUTDIR)/trafconf.o \
 		  $(OUTDIR)/clusterconf.o \
 		  $(OUTDIR)/lnodeconfig.o \
 		  $(OUTDIR)/pnodeconfig.o \
 		  $(OUTDIR)/persistconfig.o \
+		  $(OUTDIR)/nameserverconfig.o \
 		  $(OUTDIR)/trace.o \
 		  $(OUTDIR)/otrace.o \
 		  $(OUTDIR)/threadtls.o
@@ -82,15 +86,15 @@ $(LIBEXPDIR)/libtrafconfig.so: $(OBJTRAFCONFIG)
 	@echo 
 	@echo Building Trafodion Configuration Library
 	@echo 
-	@echo $(CXX) $(LIBSX) $(LNK_FLGS) -shared -o $@ $(OBJTRAFCONFIG)
-	$(CXX) $(LIBSX) $(LNK_FLGS) -shared -o $@ $(OBJTRAFCONFIG)
+	@echo $(CXX) $(LIBSX) -o $@ $(OBJTRAFCONFIG) -shared $(LNK_FLGS) 
+	$(CXX) $(LIBSX) -o $@ $(OBJTRAFCONFIG) -shared $(LNK_FLGS) 
 
 $(BINEXPDIR)/trafconf: $(OBJTRAFCONF)
 	@echo 
 	@echo Building Trafodion Configuration Utility
 	@echo 
-	@echo $(CXX) $(LIBSX) $(CDEPFLAGS) $(FLAGS) $(OPTIONS) $(INCLUDES) -o $@ $(OBJTRAFCONF)
-	@$(CXX) $(LIBSX) $(LIBTRAFCONFIGX) $(CDEPFLAGS) $(FLAGS) $(OPTIONS) $(INCLUDES) -o $@ $(OBJTRAFCONF)
+	@echo $(CXX) $(INCLUDES) -o $@ $(OBJTRAFCONF) $(LIBTRAFCONFIGX) $(CDEPFLAGS) $(FLAGS) $(OPTIONS) $(LIBSX)
+	@$(CXX) $(INCLUDES) -o $@ $(OBJTRAFCONF) $(LIBTRAFCONFIGX) $(CDEPFLAGS) $(FLAGS) $(OPTIONS) $(LIBSX)
 
 stop:
 	-killall shell monitor

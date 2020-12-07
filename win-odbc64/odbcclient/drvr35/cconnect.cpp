@@ -56,6 +56,10 @@ CConnect::CConnect(SQLHANDLE InputHandle) : CHandle(SQL_HANDLE_DBC, InputHandle)
 	InitializeCriticalSection(&m_CSTransmision);
 	m_IgnoreCancel = false; 
 	m_StartNode = -1;
+
+    lobHandleSave = NULL;
+    lobHandleLenSave = 0;
+    m_ClusterNameLength = 0;
 }
 
 CConnect::~CConnect()
@@ -611,6 +615,7 @@ SQLRETURN CConnect::Connect(SQLCHAR *ServerName,
 	// populate the inContext
 	inContext.location[0] = '\0';
 	inContext.userRole[0] = '\0';
+    inContext.sessionName[0] = '\0';
 
 	if (m_DSValue.m_DSServerDSName[0] != 0)
 		strcpy(inContext.datasource, m_DSValue.m_DSServerDSName);
@@ -3390,7 +3395,7 @@ SQLRETURN CConnect::DoEncryption(SecPwd* &pSecPwd, ProcInfo SecInfo, USER_DESC_d
 					dir[strlen(dir)-1] = '\0';
 				}
 			}
-			pSecPwd = new SecPwd(dir, file, activefile, m_ClusterName);
+        pSecPwd = new SecPwd(dir, file, activefile, m_ClusterName, m_ClusterNameLength);
 	} 
 	catch (SecurityException se) {
 		retCode = se.getErrCode();

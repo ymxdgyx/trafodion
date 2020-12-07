@@ -77,7 +77,7 @@ extern int ms_transid_reinstate(MS_Mon_Transid_Type, MS_Mon_Transseq_Type);
 // short LobServerFNum;
 SB_Phandle_Type serverPhandle;
 
-ExLob::ExLob(NAHeap * heap) :
+ExLob::ExLob(NAHeap * heap, ExHdfsScanStats *hdfsAccessStats) :
     lobDataFile_(heap),
     storage_(Lob_Invalid_Storage),
     lobStorageLocation_(string()),
@@ -85,7 +85,10 @@ ExLob::ExLob(NAHeap * heap) :
     fs_(NULL),
     fdData_(NULL),
     openFlags_(0),
-    lobTrace_(FALSE)
+    stats_(hdfsAccessStats),
+    lobTrace_(FALSE),
+    useLibHdfs_(FALSE),
+    hdfsClient_(NULL)    
 {
   // nothing else to do
 }
@@ -96,6 +99,10 @@ ExLob::~ExLob()
     if (fdData_) {
       hdfsCloseFile(fs_, fdData_);
       fdData_ = NULL;
+    }
+    if (hdfsClient_ != NULL) {
+       HdfsClient::deleteInstance(hdfsClient_);
+       hdfsClient_ = NULL;
     }
    
 }
@@ -113,6 +120,7 @@ Ex_Lob_Error ExLob::initialize(const char *lobFile, Ex_Lob_Mode mode,
   struct timespec endTime;
   Int64 secs, nsecs, totalnsecs;
  
+  useLibHdfs_ = lobGlobals->useLibHdfs_;
   if (lobStorageLocation) 
     {
       if (lobStorageLocation_.empty()) 
@@ -142,18 +150,25 @@ Ex_Lob_Error ExLob::initialize(const char *lobFile, Ex_Lob_Mode mode,
       storage_ = storage;
     }
 
-  stats_.init(); 
-
   hdfsServer_ = hdfsServer;
   hdfsPort_ = hdfsPort;
   // lobLocation_ = lobLocation;
   clock_gettime(CLOCK_MONOTONIC, &startTime);
-  
-  if (lobGlobals->getHdfsFs() == NULL)     
-    return LOB_HDFS_CONNECT_ERROR;
-  else 
-    fs_ = lobGlobals->getHdfsFs();
-    
+  lobGlobalHeap_ = lobGlobals->getHeap();    
+  HDFS_Client_RetCode hdfsClientRetcode;
+  if (useLibHdfs_) { 
+     if (lobGlobals->getHdfsFs() == NULL)     
+        return LOB_HDFS_CONNECT_ERROR;
+     else 
+        fs_ = lobGlobals->getHdfsFs();
+     hdfsClient_ = NULL;
+  }
+  else {
+     hdfsClient_ = HdfsClient::newInstance(lobGlobalHeap_, stats_, hdfsClientRetcode);
+     fs_ = NULL;
+     if (hdfsClient_ == NULL)
+        return LOB_HDFS_CONNECT_ERROR;
+  }
 
   clock_gettime(CLOCK_MONOTONIC, &endTime);
 
@@ -165,8 +180,20 @@ Ex_Lob_Error ExLob::initialize(const char *lobFile, Ex_Lob_Mode mode,
       nsecs += NUM_NSECS_IN_SEC;
     }
   totalnsecs = (secs * NUM_NSECS_IN_SEC) + nsecs;
-  stats_.hdfsConnectionTime += totalnsecs;
-    
+   
+  if (! useLibHdfs_) {
+     if (mode == EX_LOB_CREATE) {
+        hdfsClientRetcode = hdfsClient_->hdfsCreate(lobDataFile_.data(), FALSE, TRUE, FALSE); 
+        if (hdfsClientRetcode != HDFS_CLIENT_OK)
+            return LOB_DATA_FILE_CREATE_ERROR;
+     }
+     hdfsClientRetcode = hdfsClient_->hdfsOpen(lobDataFile_.data(), FALSE);
+     if (hdfsClientRetcode != HDFS_CLIENT_OK)
+        return LOB_DATA_FILE_OPEN_ERROR;
+     fdData_ = NULL;
+  }
+  else
+  {
   if (mode == EX_LOB_CREATE) 
     { 
       // check if file is already created
@@ -184,9 +211,8 @@ Ex_Lob_Error ExLob::initialize(const char *lobFile, Ex_Lob_Mode mode,
 	}
       hdfsCloseFile(fs_, fdData_);
       fdData_ = NULL;
-     
     }
-  lobGlobalHeap_ = lobGlobals->getHeap();    
+  }
   return LOB_OPER_OK;
     
 }
@@ -294,9 +320,19 @@ Ex_Lob_Error ExLob::getDesc(ExLobDesc &desc,char * handleIn, Int32 handleInLen, 
 }
 
 
-Ex_Lob_Error ExLob::writeData(Int64 offset, char *data, Int32 size, Int64 &operLen)
+Ex_Lob_Error ExLob::writeData(Int64 &offset, char *data, Int32 size, Int64 &operLen)
 { 
     Ex_Lob_Error err;
+    HDFS_Client_RetCode hdfsClientRetcode = HDFS_CLIENT_OK;
+    //Int64 writeOffset;
+
+    if (! useLibHdfs_ ) {
+      offset = hdfsClient_->hdfsWriteImmediate(data, size, hdfsClientRetcode,0,TRUE); 
+       if (hdfsClientRetcode != HDFS_CLIENT_OK)
+          return LOB_DATA_WRITE_ERROR;
+       operLen = size;
+       return LOB_OPER_OK;
+    }
     lobDebugInfo("In ExLob::writeData",0,__LINE__,lobTrace_);
     if (!fdData_ || (openFlags_ != (O_WRONLY | O_APPEND))) // file is not open for write
     {
@@ -329,7 +365,9 @@ Ex_Lob_Error ExLob::writeDataSimple(char *data, Int64 size, LobsSubOper subOpera
                                     int bufferSize , short replication , int blockSize)
 { 
     Ex_Lob_Error err;
-
+    Int64 writeOffset = 0;
+    if (! useLibHdfs_)
+       return writeData(writeOffset,data, size, operLen);
 
     if (!fdData_ || (openFlags_ != (O_WRONLY | O_APPEND))) // file is not open for write
     {
@@ -424,7 +462,14 @@ Ex_Lob_Error ExLob::emptyDirectory(char *dirPath,
                                    ExLobGlobals *lobGlobals)
 {
   int retcode = 0;
-
+  HDFS_Client_RetCode hdfsClientRetcode;
+  if (! useLibHdfs_) {
+     hdfsClientRetcode = HdfsClient::hdfsDeletePath(dirPath);
+     if (hdfsClientRetcode != HDFS_CLIENT_OK)
+        return LOB_DATA_FILE_DELETE_ERROR;
+     return LOB_OPER_OK;
+  }
+      
   hdfsFileInfo *fileInfos = hdfsGetPathInfo(fs_, dirPath);
   if (fileInfos == NULL)
     {
@@ -521,8 +566,16 @@ Ex_Lob_Error ExLob::statSourceFile(char *srcfile, Int64 &sourceEOF)
    lobDebugInfo("In ExLob::statSourceFile",0,__LINE__,lobTrace_);
    // check if the source file is a hdfs file or from local file system.
   LobInputOutputFileType srcType = fileType(srcfile);
+   HDFS_Client_RetCode hdfsClientRetcode;
    if (srcType == HDFS_FILE)
      {
+       if (! useLibHdfs_) {
+          sourceEOF = HdfsClient::hdfsSize(srcfile, hdfsClientRetcode);
+          if (hdfsClientRetcode != HDFS_CLIENT_OK)
+             return LOB_SOURCE_FILE_OPEN_ERROR;
+          ex_assert(sourceEOF >= 0, "Offset is -1 possibly due to path being directory");
+       }
+       else {
        hdfsFile sourceFile = hdfsOpenFile(fs_,srcfile,O_RDONLY,0,0,0);   
        if (!sourceFile)	           
          return LOB_SOURCE_FILE_OPEN_ERROR;
@@ -536,8 +589,8 @@ Ex_Lob_Error ExLob::statSourceFile(char *srcfile, Int64 &sourceEOF)
        
        str_sprintf(logBuf,"Returning EOF of %ld for file %s", sourceEOF,srcfile);
        lobDebugInfo(logBuf, 0,__LINE__,lobTrace_);
+       }
      }
-
    else if (srcType == LOCAL_FILE)
      {
        int openFlags = O_RDONLY;
@@ -554,11 +607,7 @@ Ex_Lob_Error ExLob::statSourceFile(char *srcfile, Int64 &sourceEOF)
        if (stat(srcfile, &statbuf) != 0) {
 	 return LOB_SOURCE_FILE_STAT_ERROR;
        }
-
        sourceEOF = statbuf.st_size;
-
-       
-
        flock(fdSrcFile, LOCK_UN);
        close(fdSrcFile);
        str_sprintf(logBuf,"Returning EOF of %ld for file %s", sourceEOF,srcfile);
@@ -610,7 +659,7 @@ Ex_Lob_Error ExLob::statSourceFile(char *srcfile, Int64 &sourceEOF)
 
 
 
-Ex_Lob_Error ExLob::readSourceFile(char *srcfile, char *&fileData, Int32 &size, Int64 offset)
+Ex_Lob_Error ExLob::readSourceFile(char *srcfile, char *&fileData, Int64 &size, Int64 offset)
  {
    Ex_Lob_Error lobErr = LOB_OPER_OK;
    // check if the source file is a hdfs file or from local file system.
@@ -633,13 +682,37 @@ Ex_Lob_Error ExLob::readSourceFile(char *srcfile, char *&fileData, Int32 &size, 
   
   return lobErr;
  }
-Ex_Lob_Error ExLob::readHdfsSourceFile(char *srcfile, char *&fileData, Int32 &size, Int64 offset)
+Ex_Lob_Error ExLob::readHdfsSourceFile(char *srcfile, char *&fileData, Int64 &size, Int64 offset)
  {
      char logBuf[4096];
-     str_sprintf(logBuf,"Calling ::readHdfsSourceFile: %s Offset:%ld, Size: %d",srcfile, offset,size);
+     str_sprintf(logBuf,"Calling ::readHdfsSourceFile: %s Offset:%ld, Size: %ld",srcfile, offset,size);
      lobDebugInfo(logBuf, 0,__LINE__,lobTrace_);
-  
-   
+     HDFS_Client_RetCode hdfsClientRetcode; 
+     Int64 bytesRead;
+     if (!useLibHdfs_) {
+        HdfsClient *srcHdfsClient = HdfsClient::newInstance(getLobGlobalHeap(), NULL, hdfsClientRetcode);
+        ex_assert(hdfsClientRetcode == HDFS_CLIENT_OK, "Internal error: HdfsClient::newInstance returned an error");
+        hdfsClientRetcode  = srcHdfsClient->hdfsOpen(srcfile, FALSE);
+        if (hdfsClientRetcode != HDFS_CLIENT_OK) {
+           HdfsClient::deleteInstance(srcHdfsClient);
+           return LOB_SOURCE_FILE_OPEN_ERROR;
+        }
+        fileData = (char *) (getLobGlobalHeap())->allocateMemory(size);
+        if (fileData == (char *)-1) {
+           HdfsClient::deleteInstance(srcHdfsClient);
+           return LOB_SOURCE_DATA_ALLOC_ERROR;
+        }
+        bytesRead = srcHdfsClient->hdfsRead(offset, fileData, size, hdfsClientRetcode);
+        if (hdfsClientRetcode != HDFS_CLIENT_OK) {
+           HdfsClient::deleteInstance(srcHdfsClient);
+           getLobGlobalHeap()->deallocateMemory(fileData);
+           return LOB_SOURCE_FILE_READ_ERROR;
+        }  
+        size = bytesRead;
+        // Memory growth/leak
+        HdfsClient::deleteInstance(srcHdfsClient);
+        return LOB_OPER_OK;
+     }
      int openFlags = O_RDONLY;
      hdfsFile fdSrcFile = hdfsOpenFile(fs_,srcfile, openFlags,0,0,0);
      if (fdSrcFile == NULL) 
@@ -662,10 +735,11 @@ Ex_Lob_Error ExLob::readHdfsSourceFile(char *srcfile, char *&fileData, Int32 &si
      
      return LOB_OPER_OK;
  }
-Ex_Lob_Error ExLob::readLocalSourceFile(char *srcfile, char *&fileData, Int32 &size, Int64 offset)
+
+Ex_Lob_Error ExLob::readLocalSourceFile(char *srcfile, char *&fileData, Int64 &size, Int64 offset)
    {  
      char logBuf[4096];
-     str_sprintf(logBuf,"Calling ::readLocalSourceFile: %s Offset:%ld, Size: %d",srcfile, offset,size);
+     str_sprintf(logBuf,"Calling ::readLocalSourceFile: %s Offset:%ld, Size: %ld",srcfile, offset,size);
      lobDebugInfo(logBuf, 0,__LINE__,lobTrace_);
   
      int openFlags = O_RDONLY;
@@ -701,7 +775,7 @@ Ex_Lob_Error ExLob::readLocalSourceFile(char *srcfile, char *&fileData, Int32 &s
      return LOB_OPER_OK ;
    }
 
-Ex_Lob_Error ExLob::readExternalSourceFile(char *srcfile, char *&fileData, Int32 &size,Int64 offset)
+Ex_Lob_Error ExLob::readExternalSourceFile(char *srcfile, char *&fileData, Int64 &size,Int64 offset)
 {
     CURL *curl;
     CURLcode res;
@@ -846,10 +920,10 @@ Ex_Lob_Error ExLob::getFileName(char *handleIn, Int32 handleInLen, char *outFile
 }
 
 
-Ex_Lob_Error ExLob::writeDesc(Int64 &sourceLen, char *source, LobsSubOper subOper, Int64 &descNumOut, Int64 &operLen, Int64 lobMaxSize,Int64 lobMaxChunkMemSize,Int64 lobGCLimit, char * handleIn, Int32 handleInLen, char *blackBox, Int32 *blackBoxLen, char *handleOut, Int32 &handleOutLen, Int64 xnId, void *lobGlobals)
+Ex_Lob_Error ExLob::writeDesc(Int64 &sourceLen, char *source, LobsSubOper subOper, Int64 &descNumOut, Int64 &dataOffset, Int64 lobMaxSize, char * handleIn, Int32 handleInLen, char *blackBox, Int32 *blackBoxLen, char *handleOut, Int32 &handleOutLen, Int64 xnId, void *lobGlobals)
 {
   Ex_Lob_Error err=LOB_OPER_OK; 
-    Int64 dataOffset = 0;
+    
     Int64 outDescPartnKey = 0;
     Int64 outDescSyskey = 0;
     Int32 clierr = 0;
@@ -867,30 +941,17 @@ Ex_Lob_Error ExLob::writeDesc(Int64 &sourceLen, char *source, LobsSubOper subOpe
        if (statSourceFile(source, sourceEOD) != LOB_OPER_OK)
          return  LOB_SOURCE_FILE_READ_ERROR;
       }
-    // Calculate sourceLen for each subOper.
-    if ((subOper == Lob_File))
-      {
-	err = statSourceFile(source, sourceLen); 
-	if (err != LOB_OPER_OK)
-	  return err;
-      }
-    if (sourceLen < 0 || sourceLen > lobMaxSize)
-      {
-	return LOB_MAX_LIMIT_ERROR; //exceeded the size of the max lob size
-        
-      }
-    if (subOper != Lob_External_File) 
-      {
-        lobDebugInfo("Calling ExLob::allocateDesc",0,__LINE__,lobTrace_);
-        err = allocateDesc((unsigned int)sourceLen, descNumOut, dataOffset, lobMaxSize, lobMaxChunkMemSize,handleIn, handleInLen, lobGCLimit,lobGlobals);
-      }
    
-    operLen = 0; 
+    if (sourceLen < 0 || sourceLen > lobMaxSize)
+      return LOB_MAX_LIMIT_ERROR; //exceeded the size of the max lob size
+        
+   
+    
     if (err != LOB_OPER_OK)
       return err;
-   lobDebugInfo("Calling cli LOB_CLI_INSERT",0,__LINE__,lobTrace_);
+    lobDebugInfo("Calling cli LOB_CLI_INSERT",0,__LINE__,lobTrace_);
    
-   clierr = SQL_EXEC_LOBcliInterface(handleIn, 
+    clierr = SQL_EXEC_LOBcliInterface(handleIn, 
                                      handleInLen, 
 				     blackBox,
                                      blackBoxLen,
@@ -909,7 +970,7 @@ Ex_Lob_Error ExLob::writeDesc(Int64 &sourceLen, char *source, LobsSubOper subOpe
     return err;
 }
 
-
+#if 0
 Ex_Lob_Error ExLob::insertDesc(Int64 offset, Int64 size,  char *handleIn, Int32 handleInLen,  char *handleOut, Int32 &handleOutLen, char *blackBox, Int32 blackBoxLen,Int64 xnId, void *lobGlobals) 
 {
   
@@ -945,67 +1006,41 @@ Ex_Lob_Error ExLob::insertDesc(Int64 offset, Int64 size,  char *handleIn, Int32 
     }
    return LOB_OPER_OK;
 }
+#endif
 
-
-Ex_Lob_Error ExLob::writeLobData(char *source, Int64 sourceLen, LobsSubOper subOperation, Int64 tgtOffset,Int64 &operLen, Int64 lobMaxChunkMemSize)
+Ex_Lob_Error ExLob::writeLobData(char *source, Int64 sourceLen, LobsSubOper subOperation, Int64 &tgtOffset,Int64 &operLen, Int64 lobMaxChunkMemSize)
 {
-    Ex_Lob_Error err=LOB_OPER_OK; 
-    char logBuf[4096];
-    lobDebugInfo("In ExLob::writeLobData",0,__LINE__,lobTrace_);
-    char *inputAddr = source;
-    Int64 readOffset = 0;
-    Int32 allocMemSize = 0;
-    Int64 inputSize = sourceLen;
-    Int64 writeOffset = tgtOffset;
-    if (subOperation == Lob_External_File)
-      return LOB_OPER_OK;
-    while(inputSize > 0)
-      {
-        allocMemSize = MINOF(lobMaxChunkMemSize, inputSize);
-	if (subOperation == Lob_File) 
-	  {
-            str_sprintf(logBuf,"reading source file %s allocMemSize : %d, readOffset:%ld", source,allocMemSize,readOffset);
-            lobDebugInfo(logBuf, 0,__LINE__,lobTrace_);
-	    err = readSourceFile(source, inputAddr, allocMemSize, readOffset);
-	    if (err != LOB_OPER_OK)
-              {
-                lobDebugInfo("readSouceFile returned an error",0,__LINE__,lobTrace_);
-                return err;    
-              } 
-	  }    
-	else 
-	  { // in memory
-	   
-	  }
-	err = writeData(writeOffset, inputAddr, allocMemSize, operLen);
-	if (err != LOB_OPER_OK)
-	  {
-            str_sprintf(logBuf,"::writeData returned error .writeOffset:%ld, allocMemSize:%d, operLen %ld ", writeOffset,allocMemSize,operLen);
-            lobDebugInfo(logBuf, 0,__LINE__,lobTrace_);
-	    //handle errors that happen in one of the chunks.
-	   return err;
-	  }
-	if (subOperation == Lob_File) {
-	  writeOffset = writeOffset+allocMemSize;
-	  readOffset = readOffset+allocMemSize;
-	  inputSize = inputSize-lobMaxChunkMemSize;
-	  getLobGlobalHeap()->deallocateMemory(inputAddr);
-          str_sprintf(logBuf,"Bookkeeping for Lob_File source.writeOffset:%ld, readOffset:%ld, inputSize: %ld ", writeOffset,readOffset, inputSize);
-          lobDebugInfo(logBuf, 0,__LINE__,lobTrace_);
-	}
-	else
-	  {
-	    writeOffset = writeOffset+allocMemSize;
-	    inputSize = inputSize-lobMaxChunkMemSize;
-	    inputAddr = inputAddr+allocMemSize;
-            str_sprintf(logBuf,"Bookkeeping for Lob_Memory source. writeOffset:%ld,  inputSize: %ld ", writeOffset, inputSize);
-            lobDebugInfo(logBuf, 0,__LINE__,lobTrace_);
-	  }
-      }
-    lobDebugInfo("Leaving ExLob::writeLobData",0,__LINE__,lobTrace_);	
+  Ex_Lob_Error err=LOB_OPER_OK; 
+  char logBuf[4096];
+  lobDebugInfo("In ExLob::writeLobData",0,__LINE__,lobTrace_);
+  HDFS_Client_RetCode hdfsClientRetcode = HDFS_CLIENT_OK;
+    
+
+  char *inputAddr = source;
+  Int64 readOffset = 0;
+  Int64 inputSize = sourceLen;
+   
+  if (subOperation == Lob_External_File)
+    return LOB_OPER_OK;
+    
+    
+  err = writeData(tgtOffset, inputAddr, inputSize, operLen);
+  if (err != LOB_OPER_OK)
+    {
+      str_sprintf(logBuf,"::writeData returned error .writeOffset:%ld, operLen %ld ", tgtOffset,operLen);
+      lobDebugInfo(logBuf, 0,__LINE__,lobTrace_);
+      //handle errors that happen in one of the chunks.
+      return err;
+    }
+  if (subOperation == Lob_File) 
+    getLobGlobalHeap()->deallocateMemory(inputAddr);
+               
+  lobDebugInfo("Leaving ExLob::writeLobData",0,__LINE__,lobTrace_);	
+  if (useLibHdfs_) {
     hdfsCloseFile(fs_, fdData_);
     fdData_=NULL;
-    return err;
+  }
+  return err;
 }
 
 Ex_Lob_Error ExLob::readToMem(char *memAddr, Int64 size,  Int64 &operLen,char * handleIn, Int32 handleInLen, char *blackBox, Int32 blackBoxLen, char * handleOut, Int32 &handleOutLen, Int64 transId)
@@ -1151,6 +1186,7 @@ Ex_Lob_Error ExLob::insertSelect(ExLob *srcLobPtr,
   Lng32  lobNum;
   Int64 descNumOut = 0;
   Int64 descNumIn = 0;
+  Int64 dataOffset = 0;
   Int64 descSyskey = 0;
   Int32 lobType = 0;
   Int64 uid, inDescSyskey, descPartnKey;
@@ -1182,7 +1218,7 @@ Ex_Lob_Error ExLob::insertSelect(ExLob *srcLobPtr,
       // Now insert this into the target lob descriptor
       
       err = writeDesc(extFileNameLen, extFileName, Lob_External_File, descNumOut, 
-                      retOperLen, lobMaxSize, lobMaxChunkMemLen,lobGCLimit,
+                      retOperLen, lobMaxSize, 
                       handleIn,handleInLen,(char *)blackBox, &blackBoxLen,
                       handleOut,handleOutLen,xnId,lobGlobals);
  
@@ -1215,9 +1251,12 @@ Ex_Lob_Error ExLob::insertSelect(ExLob *srcLobPtr,
 
   
   // write the lob data into the target lob 
+   err =  insertData(inputLobData, inputLobDataLen, Lob_Memory, dataOffset, retOperLen, lobMaxSize,lobMaxChunkMemLen,lobGCLimit,handleIn,handleInLen,(char *)blackBox, blackBoxLen,handleOut,handleOutLen,lobGlobals);
   
+  if (err != LOB_OPER_OK)
+    return err;
 
-  err = writeDesc(inputLobDataLen, inputLobData, Lob_Memory, descNumOut, retOperLen, lobMaxSize, lobMaxChunkMemLen,lobGCLimit,handleIn,handleInLen,(char *)blackBox, &blackBoxLen,handleOut,handleOutLen,xnId,lobGlobals);
+  err = writeDesc(inputLobDataLen, inputLobData, Lob_Memory, descNumOut, dataOffset, lobMaxSize,handleIn,handleInLen,(char *)blackBox, &blackBoxLen,handleOut,handleOutLen,xnId,lobGlobals);
  
   if (err != LOB_OPER_OK)
     return err;
@@ -1229,10 +1268,7 @@ Ex_Lob_Error ExLob::insertSelect(ExLob *srcLobPtr,
       ExpLOBoper::updLOBhandle(descSyskey, 0, handleIn); 
     }
 
-  err =  insertData(inputLobData, inputLobDataLen, Lob_Memory, descNumIn, retOperLen, lobMaxSize,lobMaxChunkMemLen,handleIn,handleInLen,(char *)blackBox, blackBoxLen,handleOut,handleOutLen,lobGlobals);
-  
-  if (err != LOB_OPER_OK)
-    return err;
+ 
   return LOB_OPER_OK;
 }
 
@@ -1248,7 +1284,12 @@ Ex_Lob_Error ExLob::append(char *data, Int64 size, LobsSubOper so, Int64 headDes
     char logBuf[4096];
     char *blackBox = NULL;
     Int32 blackBoxLen = 0;
-
+    Int64 chunkMemSize = 0;
+    char *source_filename = NULL;
+    Int64 sourceFileReadOffset = 0;
+    char *retBuf = 0;
+    Int64 retReadLen = 0;
+    Int64 inputSize = 0;
     if (so ==Lob_External_File)
       {
         blackBox = data;
@@ -1268,150 +1309,262 @@ Ex_Lob_Error ExLob::append(char *data, Int64 size, LobsSubOper so, Int64 headDes
       {
         return LOB_MAX_LIMIT_ERROR; //exceeded the size of the max lob size
       }
-    err = allocateDesc((unsigned int)sourceLen, dummyParam, dataOffset, lobMaxSize,lobMaxChunkMemSize,handleIn, handleInLen,lobGCLimit,lobGlobals);
-    if (err != LOB_OPER_OK)
-      return err;
 
-    lobDebugInfo("Calling cli LOB_CLI_INSERT_APPEND",0,__LINE__,lobTrace_);
-    clierr = SQL_EXEC_LOBcliInterface(handleIn, handleInLen, 
-				      blackBox, &blackBoxLen,
-                                      handleOut, &handleOutLen,
-                                      LOB_CLI_INSERT_APPEND, LOB_CLI_ExecImmed,
-                                      &dataOffset, &sourceLen,
-                                      &outDescPartnKey, &outDescSyskey, 
-				      0,
-				      xnId,lobTrace_);
-    
-    
-    if (clierr < 0 || clierr == 100) { // some error or EOD.
-      str_sprintf(logBuf,"cli LOB_CLI_INSERT_APPEND returned :%d", clierr);
-      lobDebugInfo(logBuf, 0,__LINE__,lobTrace_);
-      return LOB_DESC_APPEND_ERROR;
-    }
-
-    char *inputAddr = data;
+    if (lobGCLimit !=-1)
+     err = checkAndDoGC(size,dataOffset,lobMaxSize,lobMaxChunkMemSize,handleIn,
+                      handleInLen,lobGCLimit,lobGlobals);
+   if (err != LOB_OPER_OK){
+     lobDebugInfo("checkAndDoGC returned error",0,__LINE__,lobTrace_);
+     return err;
+   }
+   char *inputAddr = data;
+   if (so == Lob_File)
+     {
+       source_filename = data;
+     }
    
-     str_sprintf(logBuf,"Calling writeLobData: inputAddr: %ld, InputSize%ld, tgtOffset:%ld",(long)inputAddr,sourceLen,dataOffset);
-    err = writeLobData(inputAddr, sourceLen,so,dataOffset,operLen,lobMaxChunkMemSize);
-    if (err != LOB_OPER_OK)
-      {
-        lobDebugInfo("writeLobData returned error",0,__LINE__,lobTrace_);
-        return err;
-      }
+   inputSize = sourceLen;
+   while (inputSize >0)
+     {
+       chunkMemSize = MINOF(lobMaxChunkMemSize, inputSize);
+       if (so == Lob_File)
+         {
+           //read a chunk of the file input data
+           err = readSourceFile(source_filename,retBuf,chunkMemSize, sourceFileReadOffset);
+             
+           if (err != LOB_OPER_OK)              
+             return err;
+                
+           inputAddr = retBuf;
+         }
+       str_sprintf(logBuf,"Calling writeLobData: inputAddr: %ld, InputSize%ld, tgtOffset:%ld",(long)inputAddr,sourceLen,dataOffset);
+       err = writeLobData(inputAddr, chunkMemSize,so,dataOffset,operLen,lobMaxChunkMemSize);
+       if (err != LOB_OPER_OK)
+         {
+           lobDebugInfo("writeLobData returned error",0,__LINE__,lobTrace_);
+           return err;
+         }
+       lobDebugInfo("Calling cli LOB_CLI_INSERT_APPEND",0,__LINE__,lobTrace_);
+       clierr = SQL_EXEC_LOBcliInterface(handleIn, handleInLen, 
+                                         blackBox, &blackBoxLen,
+                                         handleOut, &handleOutLen,
+                                         LOB_CLI_INSERT_APPEND, LOB_CLI_ExecImmed,
+                                         &dataOffset, &chunkMemSize,
+                                         &outDescPartnKey, &outDescSyskey, 
+                                         0,
+                                         xnId,lobTrace_);
+    
+    
+       if (clierr < 0 || clierr == 100) 
+         { // some error or EOD.
+           str_sprintf(logBuf,"cli LOB_CLI_INSERT_APPEND returned :%d", clierr);
+           lobDebugInfo(logBuf, 0,__LINE__,lobTrace_);
+           return LOB_DESC_APPEND_ERROR;
+         }
+       inputSize -= chunkMemSize;
+       if (so ==Lob_File)
+         sourceFileReadOffset +=chunkMemSize;       
+       inputAddr += chunkMemSize;
+     }
+
+   
     return LOB_OPER_OK;
 }
-Ex_Lob_Error ExLob::insertData(char *data, Int64 size, LobsSubOper so,Int64 headDescNum, Int64 &operLen, Int64 lobMaxSize, Int64 lobMaxChunkMemSize,char * handleIn, Int32 handleInLen, char *blackBox, Int32 blackBoxLen, char * handleOut, Int32 &handleOutLen, void *lobGlobals)
+Ex_Lob_Error ExLob::insertData(char *data, Int64 size, LobsSubOper so,Int64 &tgtOffset, Int64 &operLen, Int64 lobMaxSize, Int64 lobMaxChunkMemSize, Int64 lobGCLimit,char * handleIn, Int32 handleInLen, char *blackBox, Int32 blackBoxLen, char * handleOut, Int32 &handleOutLen, void *lobGlobals)
 {
-   Ex_Lob_Error err=LOB_OPER_OK; 
-   ExLobDesc desc;
-   int clierr = 0;
-   operLen = 0;
-   char logBuf[4096];
-   lobDebugInfo("In ExLob::InsertData",0,__LINE__,lobTrace_);
-   str_sprintf(logBuf,"data:%ld, size %ld, lobMaxSize:%ld, lobMaxChunkMemSize:%ld", (long)data, size,lobMaxSize,lobMaxChunkMemSize);
+  Ex_Lob_Error err=LOB_OPER_OK; 
+  ExLobDesc desc;
+  int clierr = 0;
+  operLen = 0;
+  char logBuf[4096];
+  lobDebugInfo("In ExLob::InsertData",0,__LINE__,lobTrace_);
+  str_sprintf(logBuf,"data:%ld, size %ld, lobMaxSize:%ld, lobMaxChunkMemSize:%ld", (long)data, size,lobMaxSize,lobMaxChunkMemSize);
   
-   // get offset and input size from desc (the one that was just  
-   // inserted into the descriptor handle table)
-   
-   err = getDesc(desc,handleIn,handleInLen,blackBox, &blackBoxLen,handleOut,handleOutLen,0);
-     
-    if (err !=LOB_OPER_OK) { // some error or EOD.
-       lobDebugInfo("getDesc returned error",0,__LINE__,lobTrace_);
-       return LOB_DESC_READ_ERROR;
-    }
-    
-    if ((data == NULL)) { 
-       return LOB_SOURCE_DATA_ERROR;
-    }
-
-    char *inputAddr = data;
-   
-    Int64 inputSize = desc.getSize();
-    Int64 tgtOffset = desc.getOffset();
-    str_sprintf(logBuf,"Calling writeLobData: inputAddr: %ld, InputSize%ld, tgtOffset:%ld",(long)inputAddr,inputSize,tgtOffset);
-
-    lobDebugInfo(logBuf,0,__LINE__,lobTrace_);
-    err = writeLobData(inputAddr, inputSize,so, tgtOffset, 
-		       operLen,lobMaxChunkMemSize);
-    if (err != LOB_OPER_OK){
-      lobDebugInfo("writeLobData returned error",0,__LINE__,lobTrace_);
+  if (lobGCLimit !=-1)
+    err = checkAndDoGC(size,tgtOffset,lobMaxSize,lobMaxChunkMemSize,handleIn,
+                       handleInLen,lobGCLimit,lobGlobals);
+  if (err != LOB_OPER_OK)
+    {
+      lobDebugInfo("checkAndDoGC returned error",0,__LINE__,lobTrace_);
       return err;
+      if ((data == NULL))  
+        return LOB_SOURCE_DATA_ERROR;
     }
-    return LOB_OPER_OK;
+
+  char *inputAddr = data;
+   
+    
+  str_sprintf(logBuf,"Calling writeLobData: inputAddr: %ld, InputSize%ld, tgtOffset:%ld",(long)inputAddr,size,tgtOffset);
+
+  lobDebugInfo(logBuf,0,__LINE__,lobTrace_);
+  err = writeLobData(inputAddr, size,so, tgtOffset, 
+                     operLen,lobMaxChunkMemSize);
+  if (err != LOB_OPER_OK){
+    lobDebugInfo("writeLobData returned error",0,__LINE__,lobTrace_);
+    return err;
+  }
+  return LOB_OPER_OK;
 }
 Ex_Lob_Error ExLob::update(char *data, Int64 size, LobsSubOper so,Int64 headDescNum, Int64 &operLen, Int64 lobMaxSize, Int64 lobMaxChunkMemSize, Int64 lobGCLimit, char *handleIn, Int32 handleInLen,  char *handleOut, Int32 &handleOutLen, Int64 xnId,void *lobGlobals)
 {
-    Ex_Lob_Error err = LOB_OPER_OK;
-    Int64 dummyParam;
-    Int64 dataOffset = 0;
-    Int64 sourceLen = size;
-    Int32 clierr = 0;
-    Int64 outDescPartnKey,outDescSyskey = 0;
-    Int32 chunkNum = 0;
-    char logBuf[4096];
-    char *blackBox = NULL;
-    Int32 blackBoxLen = 0;
-
-    if (so == Lob_External_File)
-      {
-        blackBox = data;
-        blackBoxLen = (Int32)size;
-      }
-    lobDebugInfo("In ExLob::update",0,__LINE__,lobTrace_);
-    if ((so == Lob_File) || (so == Lob_External_File))
-      {
-        str_sprintf(logBuf,"Calling statSourceFile: source:%s, sourceLen: %ld",
-               data,sourceLen);
-        lobDebugInfo(logBuf, 0,__LINE__,lobTrace_);
-	err = statSourceFile(data, sourceLen); 
-	if (err != LOB_OPER_OK)
-	  return err;
-      }
-    if(so != Lob_External_File)
-      {
-        if (sourceLen < 0 || sourceLen > lobMaxSize)
-          {
-            return LOB_MAX_LIMIT_ERROR; //exceeded the size of the max lob size
-          }
-        lobDebugInfo("Calling allocateDesc",0,__LINE__,lobTrace_);
-        err = allocateDesc((unsigned int)sourceLen, dummyParam, dataOffset, lobMaxSize, lobMaxChunkMemSize, handleIn, handleInLen, lobGCLimit,lobGlobals);
-        if (err != LOB_OPER_OK)
-          return err;
-      }
-    lobDebugInfo("Calling CLI LOB_CLI_UPDATE_UNIQUE",0,__LINE__,lobTrace_);
-    clierr = SQL_EXEC_LOBcliInterface(handleIn, 
-                                      handleInLen, 
-				      blackBox, &blackBoxLen,
-                                      handleOut, &handleOutLen,
-                                      LOB_CLI_UPDATE_UNIQUE, LOB_CLI_ExecImmed,
-                                      &dataOffset, &sourceLen,
-                                      &outDescPartnKey, &outDescSyskey, 
-				      0,
-				      xnId,lobTrace_);
-    
-    if (clierr < 0 || clierr == 100) { // some error or EOD.
-      
-       return LOB_DESC_UPDATE_ERROR;
+  Ex_Lob_Error err = LOB_OPER_OK;
+  Int64 dummyParam;
+  Int64 dataOffset = 0;
+  Int64 sourceLen = size;
+  Int32 clierr = 0;
+  Int64 outDescPartnKey,outDescSyskey = 0;
+  Int32 chunkNum = 0;
+  char logBuf[4096];
+  char *blackBox = NULL;
+  Int32 blackBoxLen = 0;
+  Int64 chunkMemSize = 0;
+  char *source_filename = NULL;
+  Int64 sourceFileReadOffset = 0;
+  char *retBuf = 0;
+  Int64 retReadLen = 0;
+  Int64 inputSize = 0;
+  if (so == Lob_External_File)
+    {
+      blackBox = data;
+      blackBoxLen = (Int32)size;
     }
-    if (sourceLen ==0 )
-      {
-        //No need to write any data
+  lobDebugInfo("In ExLob::update",0,__LINE__,lobTrace_);
+  if ((so == Lob_File) || (so == Lob_External_File))
+    {
+      str_sprintf(logBuf,"Calling statSourceFile: source:%s, sourceLen: %ld",
+                  data,sourceLen);
+      lobDebugInfo(logBuf, 0,__LINE__,lobTrace_);
+      err = statSourceFile(data, sourceLen); 
+      if (err != LOB_OPER_OK)
         return err;
-      }
-    char *inputAddr = data;
-   
-    str_sprintf(logBuf,"Calling writeLobData.sourceLen:%ld, dataOffset:%ld",sourceLen,dataOffset);
-    lobDebugInfo(logBuf,0,__LINE__,lobTrace_);
-           
-    err = writeLobData(inputAddr, sourceLen,so,dataOffset,operLen,lobMaxChunkMemSize);
-    str_sprintf(logBuf,"writeLobData returned. operLen:%ld",operLen);
-    lobDebugInfo(logBuf,0,__LINE__,lobTrace_);
-    if (err != LOB_OPER_OK){
-       lobDebugInfo("writeLobData Failed",0,__LINE__,lobTrace_); 
-       return err;
     }
-    return LOB_OPER_OK;
-}
+  if(so != Lob_External_File)
+    {
+      if (sourceLen < 0 || sourceLen > lobMaxSize)
+        {
+          return LOB_MAX_LIMIT_ERROR; //exceeded the size of the max lob size
+        }
+        
+      if (lobGCLimit !=-1)
+        err = checkAndDoGC(size,dataOffset,lobMaxSize,lobMaxChunkMemSize,handleIn,
+                           handleInLen,lobGCLimit,lobGlobals);
+      if (err != LOB_OPER_OK)
+        {
+          lobDebugInfo("checkAndDoGC returned error",0,__LINE__,lobTrace_);
+          return err;
+        }
+    }
+      char *inputAddr = data;
+      if (so == Lob_File)
+        {
+          source_filename = data;
+        }
+     
+      inputSize = sourceLen;
+      if(inputSize == 0) //empty_blob
+        {
+          // Update the current contents with an empty lob descriptor
+          dataOffset=0; chunkMemSize=0;
+          clierr = SQL_EXEC_LOBcliInterface(handleIn, 
+                                            handleInLen, 
+                                            blackBox, &blackBoxLen,
+                                            handleOut, &handleOutLen,
+                                            LOB_CLI_UPDATE_UNIQUE, LOB_CLI_ExecImmed,
+                                            &dataOffset, &chunkMemSize,
+                                            &outDescPartnKey, &outDescSyskey, 
+                                            0,
+                                            xnId,lobTrace_);
+    
+          if (clierr < 0 || clierr == 100)       
+            return LOB_DESC_UPDATE_ERROR;
+        }
+     
+      chunkMemSize = MINOF(lobMaxChunkMemSize, inputSize);
+      if (so == Lob_File)
+        {
+          //read a chunk of the file input data
+          err = readSourceFile(source_filename,retBuf,chunkMemSize, sourceFileReadOffset);
+             
+          if (err != LOB_OPER_OK)              
+            return err;
+                
+          inputAddr = retBuf;
+        }
+      str_sprintf(logBuf,"Calling writeLobData.sourceLen:%ld, dataOffset:%ld",sourceLen,dataOffset);
+      lobDebugInfo(logBuf,0,__LINE__,lobTrace_);
+      if(sourceLen !=0)  
+        {     
+          err = writeLobData(inputAddr, chunkMemSize,so,dataOffset,operLen,lobMaxChunkMemSize);
+          str_sprintf(logBuf,"writeLobData returned. operLen:%ld",operLen);
+          lobDebugInfo(logBuf,0,__LINE__,lobTrace_);
+          if (err != LOB_OPER_OK)
+            {
+              lobDebugInfo("writeLobData Failed",0,__LINE__,lobTrace_); 
+              return err;
+            }
+        }
+      lobDebugInfo("Calling CLI LOB_CLI_UPDATE_UNIQUE",0,__LINE__,lobTrace_);
+      clierr = SQL_EXEC_LOBcliInterface(handleIn, 
+                                        handleInLen, 
+                                        blackBox, &blackBoxLen,
+                                        handleOut, &handleOutLen,
+                                        LOB_CLI_UPDATE_UNIQUE, LOB_CLI_ExecImmed,
+                                        &dataOffset, &chunkMemSize,
+                                        &outDescPartnKey, &outDescSyskey, 
+                                        0,
+                                        xnId,lobTrace_);
+    
+      if (clierr < 0 || clierr == 100)       
+        return LOB_DESC_UPDATE_ERROR;
+      inputSize -= chunkMemSize;
+      if (so ==Lob_File)
+        sourceFileReadOffset +=chunkMemSize;       
+      inputAddr += chunkMemSize;
+      //Insert rest of the chunks   
+      while (inputSize >0)
+        {
+          chunkMemSize = MINOF(lobMaxChunkMemSize, inputSize);
+          if (so == Lob_File)
+            {
+              //read a chunk of the file input data
+              err = readSourceFile(source_filename,retBuf,chunkMemSize, sourceFileReadOffset);
+             
+              if (err != LOB_OPER_OK)              
+                return err;
+                
+              inputAddr = retBuf;
+            }
+          str_sprintf(logBuf,"Calling writeLobData: inputAddr: %ld, InputSize%ld, tgtOffset:%ld",(long)inputAddr,sourceLen,dataOffset);
+          err = writeLobData(inputAddr, chunkMemSize,so,dataOffset,operLen,lobMaxChunkMemSize);
+          if (err != LOB_OPER_OK)
+            {
+              lobDebugInfo("writeLobData returned error",0,__LINE__,lobTrace_);
+              return err;
+            }
+          lobDebugInfo("Calling cli LOB_CLI_INSERT_APPEND",0,__LINE__,lobTrace_);
+          clierr = SQL_EXEC_LOBcliInterface(handleIn, handleInLen, 
+                                            blackBox, &blackBoxLen,
+                                            handleOut, &handleOutLen,
+                                            LOB_CLI_INSERT_APPEND, LOB_CLI_ExecImmed,
+                                            &dataOffset, &chunkMemSize,
+                                            &outDescPartnKey, &outDescSyskey, 
+                                            0,
+                                            xnId,lobTrace_);
+    
+    
+          if (clierr < 0 || clierr == 100) 
+            { // some error or EOD.
+              str_sprintf(logBuf,"cli LOB_CLI_INSERT_APPEND returned :%d", clierr);
+              lobDebugInfo(logBuf, 0,__LINE__,lobTrace_);
+              return LOB_DESC_APPEND_ERROR;
+            }
+          inputSize -= chunkMemSize;
+          if (so ==Lob_File)
+            sourceFileReadOffset +=chunkMemSize;       
+          inputAddr += chunkMemSize;
+        }
+      return LOB_OPER_OK;
+    }
 
 Ex_Lob_Error ExLob::delDesc(char *handleIn, Int32 handleInLen, Int64 transId)
 {
@@ -1439,6 +1592,13 @@ Ex_Lob_Error ExLob::delDesc(char *handleIn, Int32 handleInLen, Int64 transId)
 Ex_Lob_Error ExLob::purgeLob()
 {
     char logBuf[4096];
+    if (! useLibHdfs_) {
+       HDFS_Client_RetCode hdfsClientRetcode;
+       hdfsClientRetcode = HdfsClient::hdfsDeletePath(lobDataFile_.data());
+       if (hdfsClientRetcode != HDFS_CLIENT_OK)
+	  return LOB_DATA_FILE_DELETE_ERROR;
+       return LOB_OPER_OK;
+    }
      if (hdfsDelete(fs_, lobDataFile_.data(), 0) != 0)
        {
          // extract a substring small enough to fit into logBuf
@@ -1679,7 +1839,7 @@ Ex_Lob_Error ExLob::closeCursor(char *handleIn, Int32 handleInLen, Int64 transId
   return LOB_OPER_OK;
 }
 
-Ex_Lob_Error ExLob::allocateDesc(ULng32 size, Int64 &descNum, Int64 &dataOffset, Int64 lobMaxSize, Int64 lobMaxChunkMemLen, char *handleIn, Int32 handleInLen, Int64 lobGCLimit, void *lobGlobals)
+Ex_Lob_Error ExLob::checkAndDoGC(ULng32 size, Int64 &dataOffset, Int64 lobMaxSize, Int64 lobMaxChunkMemLen, char *handleIn, Int32 handleInLen, Int64 lobGCLimit, void *lobGlobals)
 {
   NABoolean GCDone = FALSE;
     Ex_Lob_Error err = LOB_OPER_OK;
@@ -1691,59 +1851,26 @@ Ex_Lob_Error ExLob::allocateDesc(ULng32 size, Int64 &descNum, Int64 &dataOffset,
     if (size > lobMaxSize)
       return LOB_MAX_LIMIT_ERROR;
     char logBuf[4096];
-    lobDebugInfo("In ExLob::allocateDesc",0,__LINE__,lobTrace_);
+    lobDebugInfo("In ExLob::checkAndDoGC",0,__LINE__,lobTrace_);
     Int32 openFlags = O_RDONLY ;   
-    if (size == 0) //we are trying to empty this lob.
-      {
-        //rename lob datafile
-        char saveLobDataFile[lobDataFile_.length() + sizeof("_save")]; // sizeof includes room for null terminator
-        strcpy(saveLobDataFile,lobDataFile_.data());
-        strcpy(saveLobDataFile+lobDataFile_.length(),"_save");
-        Int32 rc2 = hdfsRename(fs_,lobDataFile_.data(),saveLobDataFile);
-        if (rc2 == -1)
-          {
-            lobDebugInfo("Problem renaming datafile to save data file",0,__LINE__,lobTrace_);
-            return LOB_DATA_FILE_WRITE_ERROR;
-          }
-        //create a new file of the same name.
-        hdfsFile fdNew = hdfsOpenFile(fs_, lobDataFile_.data(),O_WRONLY|O_CREAT,0,0,0);
-        if (!fdNew) 
-          {
-            // extract a substring small enough to fit into logBuf
-            size_t len = MINOF(lobDataFile_.length(),sizeof(logBuf)-40); 
-            char lobDataFileSubstr[len+1];  // +1 for trailing null
-            strncpy(lobDataFileSubstr,lobDataFile_.data(),len);
-            lobDataFileSubstr[len] = '\0';
+    HDFS_Client_RetCode hdfsClientRetcode;
+    hdfsFileInfo *fInfo = NULL;
 
-            str_sprintf(logBuf,"Could not create/open file:%s",lobDataFileSubstr);
-            lobDebugInfo(logBuf,0,__LINE__,lobTrace_);
-            
-            //restore previous version
-            Int32 rc2 = hdfsRename(fs_,saveLobDataFile,lobDataFile_.data());
-              if (rc2 == -1)
-                {
-                  lobDebugInfo("Problem restoring datafile . Will need to retry the update",0,__LINE__,lobTrace_);
-                  return LOB_DATA_FILE_WRITE_ERROR;
-                }
-               return LOB_DATA_FILE_OPEN_ERROR;
-            
-          }
-        else
-          {
-            //A new empty data file has been created.
-            // delete the saved data file
-            Int32 rc2 = hdfsDelete(fs_,saveLobDataFile,FALSE);//ok to ignore error.nt32            
-            if (rc2 == -1)
-              {
-                lobDebugInfo("Problem deleting saved datafile . Will need to manually cleanup saved datafile",0,__LINE__,lobTrace_);
-              }
-            hdfsCloseFile(fs_,fdNew);
-            fdNew = NULL;    
-          }
+    if (! useLibHdfs_) {
+     
+         dataOffset = hdfsClient_->hdfsSize(hdfsClientRetcode); 
+         if (hdfsClientRetcode != HDFS_CLIENT_OK)
+            return LOB_DATA_FILE_WRITE_ERROR;
+         ex_assert(dataOffset >= 0, "Offset is -1 possibly due to path being directory");
+         return  LOB_OPER_OK;
+       
+    }
+    else
+      {
+        fInfo = hdfsGetPathInfo(fs_, lobDataFile_.data());
+        if (fInfo)
+          dataOffset = fInfo->mSize;
       }
-    hdfsFileInfo *fInfo = hdfsGetPathInfo(fs_, lobDataFile_.data());
-    if (fInfo)
-      dataOffset = fInfo->mSize;
     // if -1, don't do GC or if reached the limit do GC
     if ((lobGCLimit != -1) && (dataOffset > lobGCLimit)) 
       {
@@ -1768,13 +1895,24 @@ Ex_Lob_Error ExLob::allocateDesc(ULng32 size, Int64 &descNum, Int64 &dataOffset,
       }
       if (GCDone) // recalculate the new offset  
         {  
-          hdfsFreeFileInfo(fInfo, 1);
-          fInfo = hdfsGetPathInfo(fs_, lobDataFile_.data());
+           if (! useLibHdfs_) 
+             {
+                dataOffset = hdfsClient_->hdfsSize(hdfsClientRetcode); 
+                if (hdfsClientRetcode != HDFS_CLIENT_OK)
+                  return LOB_DATA_FILE_WRITE_ERROR;
+                ex_assert(dataOffset >= 0, "Offset is -1 possibly due to path being directory");
+             }
+           else
+             {
+               hdfsFreeFileInfo(fInfo, 1);
+               fInfo = hdfsGetPathInfo(fs_, lobDataFile_.data());
+               if (fInfo)
+                 dataOffset = fInfo->mSize;
+
+             }
         }
         
-      if (fInfo)
-        dataOffset = fInfo->mSize;
-
+     
       // extract a substring small enough to fit into logBuf
       size_t len = MINOF(lobDataFile_.length(),sizeof(logBuf)-70); 
       char lobDataFileSubstr[len+1];  // +1 for trailing null
@@ -1788,17 +1926,16 @@ Ex_Lob_Error ExLob::allocateDesc(ULng32 size, Int64 &descNum, Int64 &dataOffset,
         str_sprintf(logBuf,"Allocating new Offset %ld in %s ",
                     dataOffset,lobDataFileSubstr);
       lobDebugInfo(logBuf,0,__LINE__,lobTrace_);
-      //Find the last offset in the file
-      // dataOffset = hdfsTell(fs_,fdData_);  //commenting out.hdfsTell always returns 0 !!
      
       return LOB_OPER_OK;    
 }
+
 Ex_Lob_Error ExLob::compactLobDataFile(ExLobInMemoryDescChunksEntry *dcArray,Int32 numEntries)
 {
   Ex_Lob_Error rc = LOB_OPER_OK;
   char logBuf[4096];
   lobDebugInfo("In ExLob::compactLobDataFile",0,__LINE__,lobTrace_);
-  Int64 maxMemChunk = 100*1024*1024; //100 MB limit for intermediate buffer for transfering data
+  Int64 maxMemChunk = 64*1024*1024; //64 MB limit for intermediate buffer for transfering data
 
   // make some temporary file names
   size_t len = lobDataFile_.length();
@@ -1827,14 +1964,15 @@ Ex_Lob_Error ExLob::compactLobDataFile(ExLobInMemoryDescChunksEntry *dcArray,Int
               lobDataFileSubstr,tmpLobDataFileSubstr, saveLobDataFileSubstr);
 
   lobDebugInfo(logBuf,0,__LINE__,lobTrace_);
-  hdfsFS fs = hdfsConnect(hdfsServer_,hdfsPort_);
-  if (fs == NULL)
-    return LOB_DATA_FILE_OPEN_ERROR;
+
+  HDFS_Client_RetCode hdfsClientRetcode = HDFS_CLIENT_OK;
+  HdfsClient *srcHdfsClient = HdfsClient::newInstance(getLobGlobalHeap(), NULL, hdfsClientRetcode);
+  ex_assert(hdfsClientRetcode == HDFS_CLIENT_OK, "Internal error: HdfsClient::newInstance returned an error");
+  HdfsClient *dstHdfsClient = HdfsClient::newInstance(getLobGlobalHeap(), NULL, hdfsClientRetcode);
+  ex_assert(hdfsClientRetcode == HDFS_CLIENT_OK, "Internal error: HdfsClient::newInstance returned an error");
   
- 
-  hdfsFile  fdData = hdfsOpenFile(fs, lobDataFile_.data(), O_RDONLY, 0, 0,0);
-  
-  if (!fdData)
+  hdfsClientRetcode  = srcHdfsClient->hdfsOpen(lobDataFile_.data(), FALSE); 
+  if (hdfsClientRetcode != HDFS_CLIENT_OK)
     {
       // extract substring small enough to fit in logBuf
       len = MINOF(lobDataFile_.length(),sizeof(logBuf) - 40); 
@@ -1844,14 +1982,11 @@ Ex_Lob_Error ExLob::compactLobDataFile(ExLobInMemoryDescChunksEntry *dcArray,Int
 
       str_sprintf(logBuf,"Could not open file:%s",lobDataFileSubstr2);
       lobDebugInfo(logBuf,0,__LINE__,lobTrace_);
-      hdfsCloseFile(fs,fdData);
-      fdData = NULL;
       return LOB_DATA_FILE_OPEN_ERROR;
     }
-                          
         
-  hdfsFile fdTemp = hdfsOpenFile(fs, tmpLobDataFile,O_WRONLY|O_CREAT,0,0,0);
-  if (!fdTemp) 
+  hdfsClientRetcode  = dstHdfsClient->hdfsCreate(tmpLobDataFile, TRUE, FALSE, FALSE); 
+  if (hdfsClientRetcode != HDFS_CLIENT_OK)
     {
       // extract substring small enough to fit in logBuf
       len = MINOF(sizeof(tmpLobDataFile),sizeof(logBuf)/3 - 20); 
@@ -1861,8 +1996,8 @@ Ex_Lob_Error ExLob::compactLobDataFile(ExLobInMemoryDescChunksEntry *dcArray,Int
 
       str_sprintf(logBuf,"Could not open file:%s",tmpLobDataFileSubstr2);
       lobDebugInfo(logBuf,0,__LINE__,lobTrace_);
-      hdfsCloseFile(fs,fdTemp);
-      fdTemp = NULL;
+      srcHdfsClient->hdfsClose();
+      HdfsClient::deleteInstance(srcHdfsClient);
       return LOB_DATA_FILE_OPEN_ERROR;
     }
 
@@ -1871,112 +2006,86 @@ Ex_Lob_Error ExLob::compactLobDataFile(ExLobInMemoryDescChunksEntry *dcArray,Int
    Int64 bytesWritten = 0;
    Int64 size = 0;
    Int64 chunkLen = 0;
+   Int64 readLen = 0;
+   Int64 offset;
    char * tgt = NULL;
-   while (i < numEntries)
-     {
-       chunkLen = dcArray[i].getChunkLen();
-       if (chunkLen > maxMemChunk)
-         {
-           tgt = (char *)(getLobGlobalHeap())->allocateMemory(maxMemChunk);
-           while (chunkLen > maxMemChunk)
-             {             
-               bytesRead = hdfsPread(fs,fdData,dcArray[i].getCurrentOffset(),tgt,maxMemChunk);
-               if (bytesRead != maxMemChunk)
-                 {
-                   lobDebugInfo("Problem reading from  data file",0,__LINE__,lobTrace_);
-                   getLobGlobalHeap()->deallocateMemory(tgt);
-                   return LOB_DATA_READ_ERROR;
-                 }
-               bytesWritten = hdfsWrite(fs,fdTemp, tgt,maxMemChunk);
-               if (bytesWritten != size)
-                 {
-                   lobDebugInfo("Problem writing temp data file",0,__LINE__,lobTrace_);
-                   getLobGlobalHeap()->deallocateMemory(tgt);
-                   return LOB_TARGET_FILE_WRITE_ERROR;
-                 }
-               chunkLen -= maxMemChunk;
-             }
-          
-         }
-       else
-         {
-           tgt = (char *)(getLobGlobalHeap())->allocateMemory(chunkLen);
-            bytesRead = hdfsPread(fs,fdData,dcArray[i].getCurrentOffset(),tgt,chunkLen);
-               if (bytesRead != chunkLen)
-                 {
-                   lobDebugInfo("Problem reading from  data file",0,__LINE__,lobTrace_);
-                   getLobGlobalHeap()->deallocateMemory(tgt);
-                   return LOB_DATA_READ_ERROR;
-                 }
-               bytesWritten = hdfsWrite(fs,fdTemp, tgt,chunkLen);
-               if (bytesWritten != chunkLen)
-                 {
-                   lobDebugInfo("Problem writing to temp data file",0,__LINE__,lobTrace_);
-                   getLobGlobalHeap()->deallocateMemory(tgt);
-                   return LOB_TARGET_FILE_WRITE_ERROR;
-                 }
-         }
-       if (hdfsFlush(fs, fdTemp)) {
-          lobDebugInfo("Problem flushing to temp data file",0,__LINE__,lobTrace_);
-         return LOB_DATA_FLUSH_ERROR;
+   Ex_Lob_Error  saveError = LOB_OPER_OK;
+   tgt = (char *)(getLobGlobalHeap())->allocateMemory(maxMemChunk);
+   while ((i < numEntries) && (saveError == LOB_OPER_OK)) 
+   {
+       readLen = dcArray[i].getChunkLen();
+       offset = dcArray[i].getCurrentOffset(); 
+       while (readLen > 0) 
+       {             
+          if (readLen > maxMemChunk)
+             chunkLen = maxMemChunk;
+          else
+             chunkLen = readLen;  
+          bytesRead = srcHdfsClient->hdfsRead(offset, tgt, chunkLen, hdfsClientRetcode);
+          if (hdfsClientRetcode != HDFS_CLIENT_OK) {
+             lobDebugInfo("Problem reading from  data file",0,__LINE__,lobTrace_);
+             saveError = LOB_SOURCE_FILE_READ_ERROR;
+             break;
+          }
+          bytesWritten = dstHdfsClient->hdfsWrite(tgt, chunkLen, hdfsClientRetcode);
+          if (hdfsClientRetcode != HDFS_CLIENT_OK || bytesWritten != chunkLen) {
+             lobDebugInfo("Problem writing temp data file",0,__LINE__,lobTrace_);
+             saveError = LOB_DATA_FILE_WRITE_ERROR;
+             break;
+          }
+          readLen -= chunkLen;
+          offset += chunkLen;
        }
-       getLobGlobalHeap()->deallocateMemory(tgt);
        i++;
-     }
-   hdfsCloseFile(fs,fdTemp);
-   hdfsCloseFile(fs,fdData);
-  
+   }
+   getLobGlobalHeap()->deallocateMemory(tgt);
+   srcHdfsClient->hdfsClose(); 
+   dstHdfsClient->hdfsClose();  
+   HdfsClient::deleteInstance(srcHdfsClient);
+   HdfsClient::deleteInstance(dstHdfsClient);
+   if (saveError != LOB_OPER_OK)
+      return saveError;
    //Now save the data file and rename the tempfile to the original datafile
 
-   Int32 rc2 = hdfsRename(fs,lobDataFile_.data(),saveLobDataFile);
-   if (rc2 == -1)
-     {
+   hdfsClientRetcode = HdfsClient::hdfsRename(lobDataFile_.data(),saveLobDataFile);
+   if (hdfsClientRetcode != HDFS_CLIENT_OK) {
        lobDebugInfo("Problem renaming datafile to save data file",0,__LINE__,lobTrace_);
        return LOB_DATA_FILE_WRITE_ERROR;
-     }
-   rc2 = hdfsRename(fs,tmpLobDataFile, lobDataFile_.data());
-   if (rc2 == -1)
-     {
+   }
+   hdfsClientRetcode = HdfsClient::hdfsRename(tmpLobDataFile, lobDataFile_.data());
+   if (hdfsClientRetcode != HDFS_CLIENT_OK) {
        lobDebugInfo("Problem renaming temp datafile to data file",0,__LINE__,lobTrace_);
        return LOB_DATA_FILE_WRITE_ERROR;
-     }
+   }
    return LOB_OPER_OK;
 }
 
 Ex_Lob_Error ExLob::restoreLobDataFile()
 {
-  Ex_Lob_Error rc = LOB_OPER_OK;
   lobDebugInfo("In ExLob::restoreLobDataFile",0,__LINE__,lobTrace_);
-  
-  hdfsFS fs = hdfsConnect(hdfsServer_,hdfsPort_);
-  if (fs == NULL)
-    return LOB_DATA_FILE_OPEN_ERROR;
+  HDFS_Client_RetCode hdfsClientRetcode; 
   char saveLobDataFile[lobDataFile_.length() + sizeof("_save")]; // sizeof includes room for null terminator
   strcpy(saveLobDataFile,lobDataFile_.data());
   strcpy(saveLobDataFile+lobDataFile_.length(),"_save");
-  Int32 rc2 = hdfsDelete(fs,lobDataFile_.data(),FALSE);//ok to ignore error.
-  rc2 = hdfsRename(fs,saveLobDataFile, lobDataFile_.data());
-  if (rc2)
+  hdfsClientRetcode = HdfsClient::hdfsDeletePath(lobDataFile_.data());
+  hdfsClientRetcode = HdfsClient::hdfsRename(saveLobDataFile, lobDataFile_.data());
+  if (hdfsClientRetcode != HDFS_CLIENT_OK)
      {
        lobDebugInfo("Problem renaming savedatafile to data file",0,__LINE__,lobTrace_);
        return LOB_OPER_ERROR; 
      }
-  return rc;
+  return LOB_OPER_OK;
 
 } 
 
 Ex_Lob_Error ExLob::purgeBackupLobDataFile()
 {
   Ex_Lob_Error rc = LOB_OPER_OK;
-   lobDebugInfo("In ExLob::purgeBackupLobDataFile",0,__LINE__,lobTrace_);
-  hdfsFS fs = hdfsConnect(hdfsServer_,hdfsPort_);
-  if (fs == NULL)
-    return LOB_DATA_FILE_OPEN_ERROR;
+  lobDebugInfo("In ExLob::purgeBackupLobDataFile",0,__LINE__,lobTrace_);
   char saveLobDataFile[lobDataFile_.length() + sizeof("_save")]; // sizeof includes room for null terminator
   strcpy(saveLobDataFile,lobDataFile_.data());
   strcpy(saveLobDataFile+lobDataFile_.length(),"_save");
-  Int32 rc2 = hdfsDelete(fs,saveLobDataFile,FALSE);//ok to ignore error.
-   
+  HDFS_Client_RetCode hdfsClientRetcode  = HdfsClient::hdfsDeletePath(saveLobDataFile);//ok to ignore error.
   return rc;
 }
 ///////////////////////////////////////////////////////////////////////////////
@@ -2055,6 +2164,29 @@ Ex_Lob_Error ExLob::readCursorData(char *tgt, Int64 tgtSize, cursor_t &cursor, I
       bytesAvailable = cursor.descSize_ - cursor.bytesRead_;
       bytesToCopy = min(bytesAvailable, tgtSize - operLen);
       offset = cursor.descOffset_ + cursor.bytesRead_;
+      if (!useLibHdfs_) {
+         HDFS_Client_RetCode hdfsClientRetcode;
+         if (storage_ == Lob_External_HDFS_File) {
+            HdfsClient *srcHdfsClient = HdfsClient::newInstance(getLobGlobalHeap(), NULL, hdfsClientRetcode);
+            ex_assert(hdfsClientRetcode == HDFS_CLIENT_OK, "Internal error: HdfsClient::newInstance returned an error");
+            hdfsClientRetcode  = srcHdfsClient->hdfsOpen(lobDataFile_.data(), FALSE);
+            if (hdfsClientRetcode != HDFS_CLIENT_OK)
+               return LOB_SOURCE_FILE_OPEN_ERROR;
+            bytesRead = srcHdfsClient->hdfsRead(offset, tgt, bytesToCopy, hdfsClientRetcode);
+            if (hdfsClientRetcode != HDFS_CLIENT_OK) {
+               HdfsClient::deleteInstance(srcHdfsClient);
+               return LOB_SOURCE_FILE_READ_ERROR;
+            } 
+            HdfsClient::deleteInstance(srcHdfsClient);
+          }
+          else {
+               bytesRead = hdfsClient_->hdfsRead(offset, tgt, bytesToCopy, hdfsClientRetcode);
+               if (hdfsClientRetcode != HDFS_CLIENT_OK)
+                  return LOB_DATA_READ_ERROR;
+          }
+      }
+      else {
+
       // #endif
 
       if (!fdData_ || (openFlags_ != O_RDONLY)) 
@@ -2088,8 +2220,7 @@ Ex_Lob_Error ExLob::readCursorData(char *tgt, Int64 tgtSize, cursor_t &cursor, I
         nsecs += NUM_NSECS_IN_SEC;
       }
       Int64 totalnsecs = (secs * NUM_NSECS_IN_SEC) + nsecs;
-      stats_.CumulativeReadTime += totalnsecs;
-
+      } // useLibHdfs
       if (bytesRead == -1) {
          return LOB_DATA_READ_ERROR;
       } else if (bytesRead == 0) {
@@ -2102,9 +2233,10 @@ Ex_Lob_Error ExLob::readCursorData(char *tgt, Int64 tgtSize, cursor_t &cursor, I
       operLen += bytesRead;
       tgt += bytesRead;
    }
-  
-   hdfsCloseFile(fs_, fdData_);
-   fdData_ = NULL;
+   if (useLibHdfs_) {
+      hdfsCloseFile(fs_, fdData_);
+      fdData_ = NULL;
+   }
    return LOB_OPER_OK;
 }
 
@@ -2133,6 +2265,8 @@ Ex_Lob_Error ExLob::readDataToMem(char *memAddr,
     return err;
   
 
+  if (useLibHdfs_) 
+  {
   if (fdData_)// we may have a stale handle. close and open to refresh 
     {
       hdfsCloseFile(fs_, fdData_);
@@ -2161,10 +2295,37 @@ Ex_Lob_Error ExLob::readDataToMem(char *memAddr,
           
     }
 	
-
+  } // useLibHdfs_
      
   if (!multipleChunks)
     {
+      if (! useLibHdfs_) {
+         HDFS_Client_RetCode hdfsClientRetcode;
+         Int32 readLen;
+         if (storage_ == Lob_External_HDFS_File) {
+            HdfsClient *srcHdfsClient = HdfsClient::newInstance(getLobGlobalHeap(), NULL, hdfsClientRetcode);
+            ex_assert(hdfsClientRetcode == HDFS_CLIENT_OK, "Internal error: HdfsClient::newInstance returned an error");
+            hdfsClientRetcode  = srcHdfsClient->hdfsOpen(lobDataFile_.data(), FALSE);
+            if (hdfsClientRetcode != HDFS_CLIENT_OK) {
+               HdfsClient::deleteInstance(srcHdfsClient);
+               return LOB_SOURCE_FILE_OPEN_ERROR;
+            }
+            readLen = srcHdfsClient->hdfsRead(offset, memAddr, size, hdfsClientRetcode);
+            if (hdfsClientRetcode != HDFS_CLIENT_OK) {
+               HdfsClient::deleteInstance(srcHdfsClient);
+               return LOB_SOURCE_FILE_READ_ERROR;
+            }  
+            HdfsClient::deleteInstance(srcHdfsClient);
+            operLen = readLen;
+         } 
+         else {
+            readLen = hdfsClient_->hdfsRead(offset, memAddr, size, hdfsClientRetcode);
+            if (hdfsClientRetcode != HDFS_CLIENT_OK)
+               return LOB_DATA_READ_ERROR;
+            operLen = readLen;
+         }
+         return LOB_OPER_OK;
+      }
       lobDebugInfo("Reading in single chunk",0,__LINE__,lobTrace_);
       if ((bytesRead = hdfsPread(fs_, fdData_, offset, 
 				 memAddr, size)) == -1) {
@@ -2324,16 +2485,35 @@ Ex_Lob_Error ExLob::readDataToHdfsFile(char *tgtFileName,  Int64 offset, Int64 s
   Int64 srcLen = size;
   Int64 srcOffset = offset;
   Int64 tgtOffset = 0;
-  char *lobData = 0;
+  char *lobData = NULL;
   Int64 chunkSize = 0;	
   hdfsFile  fdTgtFile;
   char logBuf[4096];
+  writeOperLen = 0;
+  HdfsClient *tgtHdfsClient;
+  HDFS_Client_RetCode hdfsClientRetcode;
+  NABoolean overwrite = FALSE;
+  NABoolean append = FALSE;
+  Int64 remainLen = size;
+  Int64 pos = offset;
+  Int64 readLen;
   lobDebugInfo("In ExLob::readDataToHdfsFile",0,__LINE__,lobTrace_);
   // open and write to the target file
   int openFlags = O_WRONLY;
+  if (! useLibHdfs_) {
+     if (((LobTgtFileFlags)fileflags == Lob_Truncate_Or_Error) ||
+         ((LobTgtFileFlags)fileflags == Lob_Truncate_Or_Create))
+        overwrite = TRUE; 
+     if (((LobTgtFileFlags)fileflags == Lob_Append_Or_Error) ||
+	 ((LobTgtFileFlags)fileflags == Lob_Append_Or_Create))
+        append = TRUE; 
+     tgtHdfsClient = HdfsClient::newInstance(getLobGlobalHeap(), NULL, hdfsClientRetcode);
+     ex_assert(hdfsClientRetcode == HDFS_CLIENT_OK, "Internal error: HdfsClient::newInstance returned an error");
+     if (tgtHdfsClient->hdfsCreate(tgtFileName, overwrite, append, FALSE) !=  HDFS_CLIENT_OK)
+        return LOB_TARGET_FILE_OPEN_ERROR; 
+  } else {
   if ((LobTgtFileFlags)fileflags == Lob_Append_Or_Error )
     openFlags |= O_APPEND;
-
   //hdfsFile fdTgtFile = hdfsOpenFile(fs_,tgtFileName, openFlags, 0,0,0);
   if (hdfsExists(fs_,tgtFileName) == 0)
     {
@@ -2363,13 +2543,42 @@ Ex_Lob_Error ExLob::readDataToHdfsFile(char *tgtFileName,  Int64 offset, Int64 s
 	    return LOB_TARGET_FILE_OPEN_ERROR;
 	}
     } 
+  }
+  if (!multipleChunks) {
+   if (! useLibHdfs_) {
+     Int32 bytesRead; 
+     Int32 bytesWritten;
+     while (remainLen > 0) 
+     {
+        if (remainLen > lobMaxChunkMemLen)
+           readLen = lobMaxChunkMemLen;
+        else
+           readLen = remainLen;
+        if (lobData == NULL)
+           lobData = new (lobGlobalHeap_) char[readLen];
+        bytesRead = hdfsClient_->hdfsRead(pos, lobData, readLen, hdfsClientRetcode);
+        if (hdfsClientRetcode == HDFS_CLIENT_OK) 
+            bytesWritten = tgtHdfsClient->hdfsWrite(lobData, bytesRead, hdfsClientRetcode, lobMaxChunkMemLen);
+        if (hdfsClientRetcode == HDFS_CLIENT_OK) {
+           pos += bytesRead;
+           remainLen -= bytesRead;
+           writeOperLen += bytesWritten;
+        } else {
+            NADELETEBASIC(lobData, lobGlobalHeap_);
+            HdfsClient::deleteInstance(tgtHdfsClient);
+            return LOB_DATA_READ_ERROR;
+        }   
+     }
+     HdfsClient::deleteInstance(tgtHdfsClient);
+     return LOB_OPER_OK; 
+    } // !multipleChunk && !useLibHdfs
+    else { 
+      if ((srcLen < lobMaxChunkMemLen))
+      {
+         lobDebugInfo("Reading in single chunk",0,__LINE__,lobTrace_);
+         lobData = (char *) (getLobGlobalHeap())->allocateMemory(srcLen);
 
-  if ((srcLen < lobMaxChunkMemLen) && (multipleChunks ==FALSE)) // simple single I/O case
-    {
-      lobDebugInfo("Reading in single chunk",0,__LINE__,lobTrace_);
-      lobData = (char *) (getLobGlobalHeap())->allocateMemory(srcLen);
-
-      if (lobData == NULL) 
+         if (lobData == NULL) 
 	{
 	  return LOB_SOURCE_DATA_ALLOC_ERROR;
 	}
@@ -2393,23 +2602,22 @@ Ex_Lob_Error ExLob::readDataToHdfsFile(char *tgtFileName,  Int64 offset, Int64 s
 	} 
       getLobGlobalHeap()->deallocateMemory(lobData);
     }
-  else
-    {// multiple chunks to read
+   } // !multipleChunk && useLibHdfs
+ } // !multipleChunk
+ else {// multiple chunks to read
       lobDebugInfo("Reading in multiple chunks into local file",0,__LINE__,lobTrace_);
       err = openCursor(handleIn, 
 		       handleInLen,
                        transId);
       if (err != LOB_OPER_OK)
 	return err;
+      chunkSize = MINOF(srcLen, lobMaxChunkMemLen);
+      lobData = (char *) (getLobGlobalHeap())->allocateMemory(chunkSize);	      
+      if (lobData == NULL) 
+         return LOB_SOURCE_DATA_ALLOC_ERROR;
       while ( srcLen > 0)
 	{
 	  chunkSize = MINOF(srcLen, lobMaxChunkMemLen);
-	  lobData = (char *) (getLobGlobalHeap())->allocateMemory(chunkSize);	      
-	  if (lobData == NULL) 
-	    {
-	      getLobGlobalHeap()->deallocateMemory(lobData);
-	      return LOB_SOURCE_DATA_ALLOC_ERROR;
-	    }
 	  //handle reading the multiple chunks like a cursor
 	  err = readCursor(lobData,chunkSize, handleIn,
 			   handleInLen, operLen, transId);
@@ -2420,6 +2628,15 @@ Ex_Lob_Error ExLob::readDataToHdfsFile(char *tgtFileName,  Int64 offset, Int64 s
 	      getLobGlobalHeap()->deallocateMemory(lobData);
 	      return LOB_DATA_READ_ERROR;
 	    }
+          if (!useLibHdfs_) {
+              writeOperLen += tgtHdfsClient->hdfsWrite(lobData, chunkSize, hdfsClientRetcode, lobMaxChunkMemLen);
+              if (hdfsClientRetcode != HDFS_CLIENT_OK) {
+                  NADELETEBASIC(lobData, lobGlobalHeap_);
+                  HdfsClient::deleteInstance(tgtHdfsClient);
+                  return LOB_TARGET_FILE_WRITE_ERROR;
+              }
+          }
+          else {
 	  writeOperLen += hdfsWrite(fs_,fdTgtFile,lobData, chunkSize);
 	  if (writeOperLen <= 0)
 	    {
@@ -2431,18 +2648,21 @@ Ex_Lob_Error ExLob::readDataToHdfsFile(char *tgtFileName,  Int64 offset, Int64 s
 	      getLobGlobalHeap()->deallocateMemory(lobData);
 	      return LOB_DATA_FLUSH_ERROR;
 	    } 
-	  getLobGlobalHeap()->deallocateMemory(lobData);
+          }
 	  srcLen -= chunkSize;
-
 	}
       closeCursor(handleIn, 
 		  handleInLen,transId);	    
-    }
-  hdfsCloseFile(fs_, fdTgtFile);
-  fdTgtFile=NULL;
-  hdfsCloseFile(fs_,fdData_);
-  fdData_=NULL;
-  
+  }
+  getLobGlobalHeap()->deallocateMemory(lobData);
+  if (! useLibHdfs_) {
+     HdfsClient::deleteInstance(tgtHdfsClient);
+  } else {
+     hdfsCloseFile(fs_, fdTgtFile);
+     fdTgtFile=NULL;
+     hdfsCloseFile(fs_,fdData_);
+     fdData_=NULL;
+  }
   return LOB_OPER_OK;
 }
 
@@ -2469,20 +2689,19 @@ Ex_Lob_Error ExLob::closeFile()
 
 Ex_Lob_Error ExLob::readStats(char *statsBuffer)
 {
-    memcpy(statsBuffer, (char *)&stats_, sizeof(stats_));
+    stats_ = (ExHdfsScanStats *)statsBuffer;
     return LOB_OPER_OK;
 }
 
 Ex_Lob_Error ExLob::initStats()
 {
-    stats_.init();
     return LOB_OPER_OK;
 }
 //Main driver of any LOB related operation 
 
 Ex_Lob_Error ExLobsOper (
 			 char        *lobName,          // lob name
-
+                         ExHdfsScanStats *hdfsAccessStats,
 			 char        *handleIn,         // input handle (for cli calls)
 			 Int32       handleInLen,       // input handle len
 
@@ -2497,8 +2716,8 @@ Ex_Lob_Error ExLobsOper (
 
 			 Int64       &retOperLen,       // length of data involved in this operation
 
-			 Int64       requestTagIn,      // only for checking status
-			 Int64       &requestTagOut,    // returned with every request other than check status
+			 Int64       &hdfsDataOffset,  // returned by ::insertData    
+			 Int64       &unused_data_member,    // unused
 
 			 Ex_Lob_Error  &requestStatus,  // returned req status
 			 Int64       &cliError,         // err returned by cli call
@@ -2575,7 +2794,7 @@ Ex_Lob_Error ExLobsOper (
 
       if (it == lobMap->end())
 	{
-	  lobPtr = new (lobGlobals->getHeap())ExLob(lobGlobals->getHeap());
+	  lobPtr = new (lobGlobals->getHeap())ExLob(lobGlobals->getHeap(), hdfsAccessStats);
 	  if (lobPtr == NULL) 
 	    return LOB_ALLOC_ERROR;
 
@@ -2624,7 +2843,7 @@ Ex_Lob_Error ExLobsOper (
 
     case Lob_InsertDesc:
       
-      err = lobPtr->writeDesc(sourceLen, source, subOperation, descNumOut, retOperLen, lobMaxSize, lobMaxChunkMemSize,lobGCLimit,handleIn,handleInLen,(char *)blackBox, &blackBoxLen,handleOut,handleOutLen,transId,lobGlobals);
+      err = lobPtr->writeDesc(sourceLen, source, subOperation, descNumOut, hdfsDataOffset, lobMaxSize, handleIn,handleInLen,(char *)blackBox, &blackBoxLen,handleOut,handleOutLen,transId,lobGlobals);
       if (err != LOB_OPER_OK)
         {
           lobDebugInfo("writeDesc failed ",err,__LINE__,lobGlobals->lobTrace_);
@@ -2633,7 +2852,7 @@ Ex_Lob_Error ExLobsOper (
       break;
 
     case Lob_InsertData:
-      err = lobPtr->insertData(source, sourceLen, subOperation, descNumIn, retOperLen, lobMaxSize,lobMaxChunkMemSize,handleIn,handleInLen,(char *)blackBox, blackBoxLen,handleOut,handleOutLen,lobGlobals);
+      err = lobPtr->insertData(source, sourceLen, subOperation, hdfsDataOffset, retOperLen, lobMaxSize,lobMaxChunkMemSize,lobGCLimit,handleIn,handleInLen,(char *)blackBox, blackBoxLen,handleOut,handleOutLen,lobGlobals);
       if (err != LOB_OPER_OK)
         {
           lobDebugInfo("insertData failed ",err,__LINE__,lobGlobals->lobTrace_);
@@ -2668,7 +2887,7 @@ Ex_Lob_Error ExLobsOper (
 
         if (it2 == lobMap->end())
 	{
-	  srcLobPtr = new (lobGlobals->getHeap())ExLob(lobGlobals->getHeap());
+	  srcLobPtr = new (lobGlobals->getHeap())ExLob(lobGlobals->getHeap(), hdfsAccessStats);
 	  if (srcLobPtr == NULL) 
 	    return LOB_ALLOC_ERROR;
 
@@ -2720,6 +2939,19 @@ Ex_Lob_Error ExLobsOper (
 	err = LOB_SUBOPER_ERROR;
       if (blackBox)
         (lobGlobals->getHeap())->deallocateMemory((char*) blackBox);
+      break;
+    break;
+    case Lob_GetFileSize:
+      {
+        err = lobPtr->statSourceFile(lobName,retOperLen);  
+      }
+      break;
+    case Lob_ReadSourceFile:
+      {
+        char *bufAddr = (char *)unused_data_member; 
+        err = lobPtr->readSourceFile(lobName,bufAddr,descNumOut,descNumIn); 
+        unused_data_member = (Int64)bufAddr;
+      }
       break;
     case Lob_GetLength:
       {
@@ -2885,11 +3117,6 @@ Ex_Lob_Error ExLobsOper (
         lobDebugInfo("purgeLob failed ",err,__LINE__,lobGlobals->lobTrace_);
       break;
 
-    case Lob_Stats:
-      err = lobPtr->readStats(source);
-      lobPtr->initStats(); // because file may remain open across cursors
-      break;
-
     case Lob_Empty_Directory:    
       err = lobPtr->emptyDirectory(lobStorageLocation, lobGlobals);
 
@@ -2956,7 +3183,6 @@ if (!lobGlobals->isHive() )
 
   */
   clock_gettime(CLOCK_MONOTONIC, &endTime);
-
   secs = endTime.tv_sec - startTime.tv_sec;
   nsecs = endTime.tv_nsec - startTime.tv_nsec;
   if (nsecs < 0) {
@@ -2964,36 +3190,17 @@ if (!lobGlobals->isHive() )
     nsecs += NUM_NSECS_IN_SEC;
   }
   totalnsecs = (secs * NUM_NSECS_IN_SEC) + nsecs;
+/*
   if (lobPtr && lobPtr->getStats())
     lobPtr->getStats()->hdfsAccessLayerTime += totalnsecs; 
-       
+*/
   return err;
 }
 
 void cleanupLOBDataDescFiles(const char *lobHdfsServer,int lobHdfsPort,const char *lobHdfsLoc)
 { 
-  int numExistingFiles=0;
-  hdfsFS fs;
-  int err = 0;
-  fs = hdfsConnect(lobHdfsServer, lobHdfsPort);
-  if (fs == NULL)
-    return;
-  // Get this list of all data and desc files in the lob sotrage location
-  hdfsFileInfo *fileInfos = hdfsListDirectory(fs, lobHdfsLoc, &numExistingFiles);
-  if (fileInfos == NULL)
-      return ;
-    
-  //Delete each one in a loop
-  for (int i = 0; i < numExistingFiles; i++)  
-    {    
-      err = hdfsDelete(fs, fileInfos[i].mName, 0);
-    }
-    
-  // *Note* : delete the memory allocated by libhdfs for the file info array  
-  if (fileInfos)
-    {
-      hdfsFreeFileInfo(fileInfos, numExistingFiles);
-    }
+  HDFS_Client_RetCode hdfsClientRetcode  = HdfsClient::hdfsDeletePath(lobHdfsLoc);//ok to ignore error.
+  return;
 }
 
 
@@ -3095,15 +3302,15 @@ Ex_Lob_Error ExLob::readDataCursorSimple(const char *file, char *tgt, Int64 tgtS
         buf->bytesUsed_ += bytesToCopy;
         buf->bytesRemaining_ -= bytesToCopy;
       }
-      stats_.bytesPrefetched += bytesToCopy;
+      //stats_.bytesPrefetched += bytesToCopy;
       operLen += bytesToCopy;
     } 
-
+/*
     // update stats
     stats_.bytesRead += operLen;
     stats_.bytesToRead += tgtSize;
     stats_.numReadReqs++;
-
+*/
     return LOB_OPER_OK;
 }
 
@@ -3148,7 +3355,7 @@ Ex_Lob_Error ExLob::closeDataCursorSimple(const char *fileName, ExLobGlobals *lo
       nsecs += NUM_NSECS_IN_SEC;
     }
     Int64 totalnsecs = (secs * NUM_NSECS_IN_SEC) + nsecs;
-    stats_.cursorElapsedTime += totalnsecs;
+    //stats_.cursorElapsedTime += totalnsecs;
 
     return LOB_OPER_OK;
 }
@@ -3203,7 +3410,7 @@ Ex_Lob_Error ExLobGlobals::performRequest(ExLobHdfsRequest *request)
           cursor->lock_.unlock();
           buf = new (getHeap()) ExLobCursorBuffer();
           buf->data_ = (char *) (getHeap())->allocateMemory( cursor->bufMaxSize_);
-          lobPtr->stats_.buffersUsed++;
+          //lobPtr->stats_.buffersUsed++;
         }
         size = min(cursor->bufMaxSize_, (cursor->maxBytes_ - cursor->bytesRead_));
         if (buf->data_) {
@@ -3304,7 +3511,7 @@ Ex_Lob_Error ExLob::readCursorDataSimple(char *tgt, Int64 tgtSize, cursor_t &cur
       // bytesRead = hdfsPread(fs_, fdData_, offset, tgt, bytesToCopy);
       bytesRead = hdfsRead(fs_, fdData_, tgt, bytesToCopy);
 
-      stats_.numHdfsReqs++;
+      //stats_.numHdfsReqs++;
 
       if (bytesRead == -1) {
          return LOB_DATA_READ_ERROR;
@@ -3327,10 +3534,11 @@ Ex_Lob_Error ExLob::readCursorDataSimple(char *tgt, Int64 tgtSize, cursor_t &cur
    }
 
    Int64 totalnsecs = (secs * NUM_NSECS_IN_SEC) + nsecs;
-   stats_.CumulativeReadTime += totalnsecs;
+   //stats_.CumulativeReadTime += totalnsecs;
 
    return LOB_OPER_OK;
 }
+
 void ExLobCursor::emptyPrefetchList(ExLobGlobals *lobGlobals)
 {
     ExLobCursor::bufferList_t::iterator c_it;
@@ -3392,7 +3600,8 @@ ExLobGlobals::ExLobGlobals(NAHeap *lobHeap) :
     threadTraceFile_(NULL),
     lobTrace_(FALSE),
     numWorkerThreads_(0),
-    heap_(lobHeap)
+    heap_(lobHeap),
+    useLibHdfs_(FALSE)
 {
   //initialize the log file
   if (getenv("TRACE_HDFS_THREAD_ACTIONS"))
@@ -3481,17 +3690,22 @@ ExLobGlobals::~ExLobGlobals()
     //delete the lobMap AFTER the worker threads have finished their pending 
     //work since they may still be using an objetc that was fetched off the lobMap_
     if (lobMap_) 
-      {
+    {
+        lobMap_it it2; 
+        for (it2 = lobMap_->begin(); it2 != lobMap_->end() ; ++it2)
+        {
+           ExLob *lobPtr = it2->second; 
+           NADELETE(lobPtr, ExLob, heap_);
+        } 
+        lobMap_->clear();
         NADELETE(lobMap_,lobMap_t,heap_);
         lobMap_ = NULL;
-      }
+    }
     
     //msg_mon_close_process(&serverPhandle);
     if (threadTraceFile_)
       fclose(threadTraceFile_);
     threadTraceFile_ = NULL;
-
-   
 }
 
 
@@ -3504,11 +3718,6 @@ Ex_Lob_Error ExLobGlobals::initialize()
     lobMap_ = (lobMap_t *) new (getHeap())lobMap_t;  
     if (lobMap_ == NULL)
       return LOB_INIT_ERROR;
-    // No need to start them here for LOB usage.These worker threads are needed 
-    // only for hive access so moving them to the ExpLOBInterfaceInit function 
-    // where they will get started only in case of hive access.
-    // start the worker threads
-    //startWorkerThreads();
 
     return err;
 }
@@ -3784,7 +3993,7 @@ void ExLobGlobals::traceMessage(const char *logMessage, ExLobCursor *cursor,
 
 //Enable envvar TRACE_LOB_ACTIONS to enable tracing. 
 //The output file will be in 
-//$TRAF_HOME/logs directory on each node
+//$TRAF_LOG directory on each node
 
 void lobDebugInfo(const char *logMessage,Int32 errorcode,
                          Int32 line, NABoolean lobTrace)

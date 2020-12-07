@@ -333,6 +333,7 @@ Lng32 MCWrapper::setupMCColumnIterator (HSColGroupStruct *group, MCIterator** it
 
       case REC_BYTE_F_ASCII: 
       case REC_BYTE_F_DOUBLE:
+      case REC_BINARY_STRING:
         iter[currentLoc] = new (STMTHEAP) MCFixedCharIterator((char*)group->strData, group->ISlength);
 
         MCFcharIter = (MCFixedCharIterator*)(iter[currentLoc]);
@@ -345,6 +346,7 @@ Lng32 MCWrapper::setupMCColumnIterator (HSColGroupStruct *group, MCIterator** it
 
       case REC_BYTE_V_ASCII: 
       case REC_BYTE_V_DOUBLE:
+      case REC_VARBINARY_STRING:
         iter[currentLoc] = new (STMTHEAP) MCVarCharIterator((char*)group->strData);
 
         MCVcharIter = (MCVarCharIterator*)iter[currentLoc];
@@ -992,8 +994,8 @@ void HSGlobalsClass::formGroupSets()
       {
          if (LM->LogNeeded())
          {
-            sprintf(LM->msg, "\tMC: GROUP (%s) has state DONT_TRY, is skipped", mgroup_set->colNames->data());
-            LM->Log(LM->msg);
+            *LM << "\tMC: GROUP (" << mgroup_set->colNames->data() << ") has state DONT_TRY, is skipped";
+            LM->FlushToLog();
          }
       }
       else if ((mgroup_set->mcis_groupHead) && (mgroup_set->state != PROCESSED))
@@ -1002,8 +1004,8 @@ void HSGlobalsClass::formGroupSets()
 
          if (LM->LogNeeded())
          {
-            sprintf(LM->msg, "\tMC: GROUP (%s) is a HEAD GROUP ", mgroup_set->colNames->data());
-            LM->Log(LM->msg);
+            *LM << "\tMC: GROUP (" << mgroup_set->colNames->data() << ") is a HEAD GROUP ";
+            LM->FlushToLog();
          }
 
          mgroup =  multiGroup;
@@ -1047,16 +1049,15 @@ void HSGlobalsClass::formGroupSets()
             {
               myNextNeighbpr = myNextNeighbpr->mcis_next;
 
-              sprintf(LM->msg, "\tMC: GROUP (%s) is neighbor of HEAD GROUP (%s)", 
-                      myNextNeighbpr->colNames->data(), mgroup_set->colNames->data());
-              LM->Log(LM->msg);
+              *LM << "\tMC: GROUP (" << myNextNeighbpr->colNames->data() << 
+                     ") is neighbor of HEAD GROUP (" << mgroup_set->colNames->data() << ")"; 
+              LM->FlushToLog();
             }
 
             if (mgroup_set->mcis_groupWeight.isNull())
             {
-               sprintf(LM->msg, "\tMC: GROUP (%s) has no neighbors", 
-                       mgroup_set->colNames->data());
-               LM->Log(LM->msg);
+              *LM << "\tMC: GROUP (" << mgroup_set->colNames->data() << ") has no neighbors"; 
+              LM->FlushToLog();
             }
          }
       }
@@ -1497,11 +1498,11 @@ HSColGroupStruct::HSColGroupStruct()
 
 HSColGroupStruct::~HSColGroupStruct()
   {
+    freeISMemory();  // do this first, as it dereferences colNames for logging
     delete clistr;
     delete colNames;
     delete groupHist;
     delete next;
-    freeISMemory();
   }
 
 /**
@@ -1760,8 +1761,8 @@ void HSColGroupStruct::freeISMemory(NABoolean freeStrData, NABoolean freeMCData)
   HSLogMan *LM = HSLogMan::Instance();
   if (LM->LogNeeded())
     {
-      sprintf(LM->msg, "Freeing IS memory for column %s", colNames->data());
-      LM->Log(LM->msg);
+      *LM << "Freeing IS memory for column " << colNames->data();
+      LM->FlushToLog();
     }
 
   // used by MC in-memory since a column might have been processed but kept
@@ -3186,38 +3187,13 @@ HSGlobalsClass::~HSGlobalsClass()
   DeleteHSContext(contID_);
 }
 
+
 // -----------------------------------------------------------------------
-//
+// Initialize stats schema for Hive or native HBase tables if needed
 // -----------------------------------------------------------------------
-Lng32 HSGlobalsClass::Initialize()
+Lng32 HSGlobalsClass::InitializeStatsSchema()
   {
     Lng32 retcode = 0;
-    NAString query;
-    HSCursor cursor;
-    Int64 xSampleSet = 0;
-    char intStr[30], intStr2[30];
-    Int64 inserts, deletes, updates;
-    HSLogMan *LM = HSLogMan::Instance();
-    HSGlobalsClass *hs_globals = GetHSContext();
-
-    // Seed the random number generator used in quicksort().
-    srand(time(NULL));
-    // Set the default catalog names for Hive and HBase.
-    if (defaultHiveCatName == NULL)
-       defaultHiveCatName = new (GetCliGlobals()->exCollHeap()) NAString("");
-    else
-      (*defaultHiveCatName) = "";
-
-    CmpCommon::getDefault(HIVE_CATALOG, (*defaultHiveCatName), FALSE);
-    (*defaultHiveCatName).toUpper();
-
-    if (defaultHbaseCatName == NULL)
-       defaultHbaseCatName = new (GetCliGlobals()->exCollHeap()) NAString("");
-    else
-      (*defaultHbaseCatName) = "";
-
-    CmpCommon::getDefault(HBASE_CATALOG, (*defaultHbaseCatName), FALSE);
-    (*defaultHbaseCatName).toUpper();
 
                                               /*==============================*/
                                               /*   CREATE HIVE STATS SCHEMA   */
@@ -3260,6 +3236,47 @@ Lng32 HSGlobalsClass::Initialize()
     retcode = CreateHistTables(this);
     HSHandleError(retcode);
 
+    return retcode;
+  }
+
+
+
+// -----------------------------------------------------------------------
+//
+// -----------------------------------------------------------------------
+Lng32 HSGlobalsClass::Initialize()
+  {
+    Lng32 retcode = 0;
+    NAString query;
+    HSCursor cursor;
+    Int64 xSampleSet = 0;
+    char intStr[30], intStr2[30];
+    Int64 inserts, deletes, updates;
+    HSLogMan *LM = HSLogMan::Instance();
+    HSGlobalsClass *hs_globals = GetHSContext();
+
+    // Seed the random number generator used in quicksort().
+    srand(time(NULL));
+    // Set the default catalog names for Hive and HBase.
+    if (defaultHiveCatName == NULL)
+       defaultHiveCatName = new (GetCliGlobals()->exCollHeap()) NAString("");
+    else
+      (*defaultHiveCatName) = "";
+
+    CmpCommon::getDefault(HIVE_CATALOG, (*defaultHiveCatName), FALSE);
+    (*defaultHiveCatName).toUpper();
+
+    if (defaultHbaseCatName == NULL)
+       defaultHbaseCatName = new (GetCliGlobals()->exCollHeap()) NAString("");
+    else
+      (*defaultHbaseCatName) = "";
+
+    CmpCommon::getDefault(HBASE_CATALOG, (*defaultHbaseCatName), FALSE);
+    (*defaultHbaseCatName).toUpper();
+
+    // initialize stats schema if this is a Hive or native HBase table
+    retcode = InitializeStatsSchema();
+    HSHandleError(retcode);    
 
                                              /*==============================*/
                                              /*   CREATE UNDOCUMENTED VIEW   */
@@ -3365,7 +3382,7 @@ Lng32 HSGlobalsClass::Initialize()
             LM->StartTimer("Execute query to get row count");
             query  = "SELECT COUNT(*) FROM ";
             query += getTableName(user_table->data(), nameSpace);
-            query += " FOR READ UNCOMMITTED ACCESS";
+            query += " FOR SKIP CONFLICT ACCESS";
             retcode = cursor.fetchNumColumn(query, NULL, &actualRowCount);
             LM->StopTimer();
             HSHandleError(retcode);
@@ -3787,12 +3804,12 @@ NABoolean HSGlobalsClass::isAuthorized(NABoolean isShowStats)
 // the fully-qualified table names.
 void HSGlobalsClass::initJITLogData()
 {
-  char* sqroot = getenv("TRAF_HOME");
-  if (!sqroot)
+  char* sqlogs = getenv("TRAF_LOG");
+  if (!sqlogs)
     return;
   
-  NAString filePath = sqroot;
-  filePath.append("/logs/jit_ulog_params");
+  NAString filePath = sqlogs;
+  filePath.append("/jit_ulog_params");
   FILE* jitParamFile = fopen(filePath.data(), "r");
   if (!jitParamFile)
     return;
@@ -4269,18 +4286,13 @@ Lng32 HSSample::make(NABoolean rowCountIsEstimate, // input
     dml += cardHint;
 
     dml += sampleOption;
-    dml += " FOR READ UNCOMMITTED ACCESS";
+    dml += " FOR SKIP CONFLICT ACCESS";
     const Int32 hsALLOW_SPECIALTABLETYPE = 0x1;
     if (objDef->getNameSpace() == COM_IUD_LOG_TABLE_NAME)
     {
        SQL_EXEC_SetParserFlagsForExSqlComp_Internal(hsALLOW_SPECIALTABLETYPE);
     }
 
-    // initialize sourceTableRowCount to -1. The method that sets this parameter
-    // will not change this value if there is an error. So if 
-    // sourceTableRowCount = -1 after the call, we know something went wrong 
-    // and we do not use this value.
-    Int64 sourceTableRowCount = -1;
     // on very busy system, some "update statistics" implementation steps like
     // "Process_Query" step in HSSample::make() that calls HSFuncExecQuery
     // may experience failures resulting in a flurry of callcatcher error 9200 
@@ -4290,11 +4302,12 @@ Lng32 HSSample::make(NABoolean rowCountIsEstimate, // input
     // 2 cqds allow user control of these retries.
     Int32 centiSecs = getDefaultAsLong(USTAT_RETRY_DELAY);
     Int32 limit = getDefaultAsLong(USTAT_RETRY_LIMIT);
+    Int64 printPlan = 1;
     if (limit < 1 || centiSecs < 1) // user does not want any retry
     {
       LM->StartTimer("Populate sample table");
       retcode = HSFuncExecQuery(dml, - UERR_INTERNAL_ERROR, &sampleRowCount, 
-                                HS_QUERY_ERROR, &sourceTableRowCount, objDef);
+                                HS_QUERY_ERROR, &printPlan , objDef);
       LM->StopTimer();
     }
     else // user wants retry
@@ -4303,7 +4316,7 @@ Lng32 HSSample::make(NABoolean rowCountIsEstimate, // input
       HSFuncExecQuery("CONTROL QUERY DEFAULT AUTO_QUERY_RETRY 'ON'");
       LM->StartTimer("Populate sample table (with possible retry)");
       retcode = HSFuncExecQuery(dml, - UERR_INTERNAL_ERROR, &sampleRowCount, 
-                                HS_QUERY_ERROR, &sourceTableRowCount, objDef);
+                                HS_QUERY_ERROR, &printPlan, objDef);
       LM->StopTimer();
       HSFuncExecQuery("CONTROL QUERY DEFAULT AUTO_QUERY_RETRY RESET");
     }
@@ -4375,6 +4388,12 @@ Lng32 HSSample::make(NABoolean rowCountIsEstimate, // input
         LM->Log(LM->msg);
       }
 
+ 
+    double sampleRatio = samplePercent / 100;
+    double tableRowCntDbl = ((double)sampleRowCount) / sampleRatio;
+    if (!isnormal(tableRowCntDbl))  // if we get NaN, infinity etc, just use original row count
+      tableRowCntDbl = (double)tableRowCnt;
+
     // TEMP: ignore empty sample set if bulk load is on as rowcount is currently not 
     // being returned by bulk load.
     if ((sampleRowCount == 0) &&                    // sample set is empty;
@@ -4389,20 +4408,16 @@ Lng32 HSSample::make(NABoolean rowCountIsEstimate, // input
       hs_globals->sampleTableUsed = TRUE;
       hs_globals->samplingUsed    = TRUE;
       hs_globals->sampleSeconds   = getTimeDiff();
-      // If (a) current row count is estimate (for R2.3 and later, this is unlikely)
+      // If (a) current row count is estimate
       //    (b) user has not specified the rowcount and
-      //    (c) we appear to get a meaningful rowcount for the source table 
-      //        (source table rowcount >= rows inserted into sample table) and
-      //    (d) CLUSTER sampling not used
-      // we set the actualRowCount to the value obtained from the statistics table
-      // This works since every row of the source table is scanned for EID sampling
-      // and the number of rows scanned is recorded in the stats area.
+      //    (c) CLUSTER sampling not used
+      // we set the actualRowCount to the value inferred by the number of sample
+      // rows and the sampling ratio.
       if (rowCountIsEstimate &&
           !(hs_globals->optFlags & ROWCOUNT_OPT) &&
-          (sourceTableRowCount > sampleRowCount) &&
           (hs_globals->optFlags & SAMPLE_REQUESTED) != SAMPLE_RAND_2) 
         {
-          tableRowCnt = sourceTableRowCount;
+          tableRowCnt = (Int64)tableRowCntDbl;
           if (LM->LogNeeded())
           {
             convertInt64ToAscii(tableRowCnt, intStr);
@@ -4411,7 +4426,8 @@ Lng32 HSSample::make(NABoolean rowCountIsEstimate, // input
           }
         }
       }
-    else if (rowCountIsEstimate && sourceTableRowCount > sampleRowCount) tableRowCnt = sourceTableRowCount;
+    else if (rowCountIsEstimate) 
+      tableRowCnt = (Int64)tableRowCntDbl;
 
     LM->StopTimer();
 
@@ -5179,10 +5195,11 @@ void HSGlobalsClass::getMemoryRequirementsForOneMCGroup(HSColGroupStruct* mgroup
 
   if (LM->LogNeeded())
   {
-    sprintf(LM->msg, "MC: Group with columns %s requires (%ld) bytes of memory"
-                     " for internal sort including (%ld) bytes for MC processing.",
-                      mgroup->colNames->data(), mgroup->mcis_totalMCmemNeeded, mgroup->memNeeded);
-    LM->Log(LM->msg);
+    *LM << "MC: Group with columns " << mgroup->colNames->data() << " requires (" 
+        << mgroup->mcis_totalMCmemNeeded 
+        << ") bytes of memory for internal sort including ("
+        << mgroup->memNeeded << ") bytes for MC processing.";
+    LM->FlushToLog();
   }
 }
 
@@ -5242,6 +5259,7 @@ void HSGlobalsClass::getMemoryRequirementsForOneGroup(HSColGroupStruct* group, I
 
           case REC_BYTE_F_ASCII:
           case REC_BYTE_F_DOUBLE:
+          case REC_BINARY_STRING:
             // Length is in bytes, not chars. Add size for object that references
             // the string, which is stored in a separate array.
             elementSize = group->ISlength + sizeof(ISFixedChar);
@@ -5249,6 +5267,7 @@ void HSGlobalsClass::getMemoryRequirementsForOneGroup(HSColGroupStruct* group, I
 
           case REC_BYTE_V_ASCII:
           case REC_BYTE_V_DOUBLE:
+          case REC_VARBINARY_STRING:
             elementSize = group->varcharContentSize() + sizeof(ISVarChar);
             break;
 
@@ -5328,13 +5347,16 @@ Lng32 HSGlobalsClass::validateIUSWhereClause()
 {
   Lng32 retcode = 0;
 
+  // use QualifiedName constructor to correctly handle delimited names.
+  QualifiedName qualTableName(user_table->data(), 1);
+  NAString tableNameStr = qualTableName.getUnqualifiedObjectNameAsAnsiString();
+  NAString query = "select count(*) from ";
+  query.append(tableNameStr);
+  query.append(" where ").append(getWherePredicateForIUS());
+
   // set PARSING_IUS_WHERE_CLAUSE bit in Sql_ParserFlags; return it to
   // its entry value on exit
   PushAndSetSqlParserFlags savedParserFlags(PARSING_IUS_WHERE_CLAUSE);
-
-  NAString query = "select count(*) from ";
-  query.append(getTableName(strrchr(user_table->data(), '.')+1, nameSpace));
-  query.append(" where ").append(getWherePredicateForIUS());
 
   Parser parser(CmpCommon::context());
   Lng32 diagsMark = diagsArea.mark();
@@ -5447,6 +5469,14 @@ Lng32 HSGlobalsClass::CollectStatistics()
       }
     else if (optFlags & IUS_PERSIST)  // PERSIST keyword given with sample clause
       {
+        // If all the user columns in the table are LOB columns, our sample table
+        // would have zero columns. So return an error for that case.
+        if (objDef->allUserColumnsAreLOBs())
+          {
+            HSFuncMergeDiags(- UERR_ALL_LOB_COLUMNS);
+            return -1;
+          }
+
         // Create a persistent sample table. It will be used for this non-IUS
         // execution of Update Stats, and updated incrementally for subsequent
         // IUS operations.
@@ -5865,7 +5895,7 @@ Lng32 HSGlobalsClass::CollectStatistics()
 
         group->clistr->append(" GROUP BY ");
         group->clistr->append(columnName.data());
-        group->clistr->append(" FOR READ UNCOMMITTED ACCESS) T(");
+        group->clistr->append(" FOR SKIP CONFLICT ACCESS) T(");
         group->clistr->append(columnName.data());
         if (isVarChar)
         {
@@ -7013,13 +7043,13 @@ Lng32 HSGlobalsClass::CollectStatisticsForIUS(Int64 currentSampleSize,
 // is in the same schema as the one referenced by tblDef). This avoids problems
 // in parsing the fully qualified name posed by the possibility of periods within
 // delimited identifiers.
-static const char* extractTblName(const NAString& fullyQualifiedName,
-		                          HSTableDef* tblDef)
+static void extractTblName(const NAString& fullyQualifiedName,
+		           HSTableDef* tblDef, NAString & out)
 {
   Lng32 tblNameOffset = tblDef->getCatName().length() +
                         tblDef->getSchemaName().length() +
                         2;  // 2 dot separators
-  return fullyQualifiedName.data() + tblNameOffset;
+  out = fullyQualifiedName.data() + tblNameOffset;
 }
 
 // Update the persistent sample table and determine its new cardinality.
@@ -7103,8 +7133,9 @@ Lng32 HSGlobalsClass::UpdateIUSPersistentSampleTable(Int64 oldSampleSize,
   }
 
   rowsAffected = 0;
-  const char* insSourceTblName = extractTblName(*hssample_table + "_I", objDef);
-  NABoolean needEspParReset = setEspParallelism(objDef, insSourceTblName);
+  NAString insSourceTblName;
+  extractTblName(*hssample_table + "_I", objDef, insSourceTblName /* out */);
+  NABoolean needEspParReset = setEspParallelism(objDef, insSourceTblName.data());
  
   // can't retry this one, as it uses non-transactional upsert using load + random
   // select; a retry might add *another* random sample to a partial sample from
@@ -7715,6 +7746,7 @@ Int32 HSGlobalsClass::processIUSColumn(HSColGroupStruct* smplGroup,
         break;
       case REC_BYTE_F_ASCII:
       case REC_BYTE_F_DOUBLE:
+      case REC_BINARY_STRING:
         {
           // Create an object to be used with the value iterator; does not own its content.
           // In setting length, take into account that length in IUSFixedChar is in
@@ -7732,6 +7764,7 @@ Int32 HSGlobalsClass::processIUSColumn(HSColGroupStruct* smplGroup,
         break;
       case REC_BYTE_V_ASCII:
       case REC_BYTE_V_DOUBLE:
+      case REC_VARBINARY_STRING:
         {
           // Create an object to be used with the value iterator; does not own its content.
           // In setting length, take into account that length in IUSFixedChar is in
@@ -9189,7 +9222,7 @@ Lng32 HSGlobalsClass::ComputeMCStatistics(NABoolean usingIS)
             if (LM->LogNeeded())
             {
                char title[1000];
-               sprintf(title, "MC: Compute using Internal Sort (%s) with%sskew",
+               sprintf(title, "MC: Compute using Internal Sort (%.940s) with%sskew",
                                mgroup->colNames->data(), collectMCSkewedValues? " " : " NO ");
                LM->StartTimer(title);
                (void)getTimeDiff(TRUE);
@@ -9326,7 +9359,7 @@ Lng32 HSGlobalsClass::ComputeMCStatistics(NABoolean usingIS)
             if (LM->LogNeeded())
             {
                char title[1000];
-               sprintf(title, "MC: Compute using SQL (%s) with%sskew",
+               sprintf(title, "MC: Compute using SQL (%.940s) with%sskew",
                                mgroup->colNames->data(), collectMCSkewedValues? " " : " NO ");
                LM->StartTimer(title);
                (void)getTimeDiff(TRUE);
@@ -9378,7 +9411,7 @@ Lng32 HSGlobalsClass::ComputeMCStatistics(NABoolean usingIS)
 
             mgroup->clistr->append(" GROUP BY ");
             mgroup->clistr->append(mgroupColNames);
-            mgroup->clistr->append(" FOR READ UNCOMMITTED ACCESS) T(");
+            mgroup->clistr->append(" FOR SKIP CONFLICT ACCESS) T(");
             mgroup->clistr->append(mgroupColNames);
             mgroup->clistr->append(", FMTVAL, SUMVAL)");
             if(collectMCSkewedValues)
@@ -10614,8 +10647,8 @@ void HSColGroupStruct::print()
 
     if (this != NULL)
       {
-        sprintf(LM->msg, "\t\t\t%d, %u, %u, (%s)", colCount, oldHistid, newHistid, colNames->data());
-        LM->Log(LM->msg);
+        *LM << "\t\t\t" << colCount << ", " << oldHistid << ", " << newHistid << ", (" << colNames->data() << ")";
+        LM->FlushToLog();
         if (this->next != NULL)
           this->next->print();
       }
@@ -10640,8 +10673,10 @@ void processNullsForColumn(HSColGroupStruct *group, Lng32 rowsRead, T* dummyPtr)
   // copy data for MC
   if ( HSGlobalsClass::performISForMC() && (group->mcs_usingme > 0) &&
       (group->ISdatatype != REC_BYTE_F_ASCII) && 
+      (group->ISdatatype != REC_BINARY_STRING) && 
       (group->ISdatatype != REC_BYTE_F_DOUBLE) &&
       (group->ISdatatype != REC_BYTE_V_ASCII) && 
+      (group->ISdatatype != REC_VARBINARY_STRING) && 
       (group->ISdatatype != REC_BYTE_V_DOUBLE)   
      )
 
@@ -10795,6 +10830,7 @@ Lng32 HSGlobalsClass::processInternalSortNulls(Lng32 rowsRead, HSColGroupStruct 
 
           case REC_BYTE_F_ASCII:
           case REC_BYTE_F_DOUBLE:
+          case REC_BINARY_STRING:
             // Set up elements of data array, which are pointers to char values.
             chPtr = (ISFixedChar*)group->nextData;
             dataPtr = (char*)group->strNextData;
@@ -10811,6 +10847,7 @@ Lng32 HSGlobalsClass::processInternalSortNulls(Lng32 rowsRead, HSColGroupStruct 
 
           case REC_BYTE_V_ASCII:
           case REC_BYTE_V_DOUBLE:
+          case REC_VARBINARY_STRING:
             {
               // Set up elements of data array, which are pointers to varchar
               // values (2-byte length field followed by string). The length
@@ -10978,6 +11015,8 @@ bool isInternalSortType(HSColumnStruct &col)
       case REC_IEEE_FLOAT64:
       case REC_BYTE_F_ASCII:
       case REC_BYTE_V_ASCII:
+      case REC_BINARY_STRING:
+      case REC_VARBINARY_STRING:
         return true;
 
       case REC_BYTE_F_DOUBLE:
@@ -11068,8 +11107,8 @@ NABoolean isInternalSortEfficient(Int64 rows, HSColGroupStruct *group)
        // then compute this column using IS regardless of UEC
        returnVal = TRUE;
     }
-  else if ((dataType >= REC_MIN_BINARY &&
-       dataType <= REC_MAX_BINARY)||
+  else if ((dataType >= REC_MIN_BINARY_NUMERIC &&
+       dataType <= REC_MAX_BINARY_NUMERIC)||
        dataType == REC_DECIMAL_LSE ||
        dataType == REC_DECIMAL_UNSIGNED ||
        dataType == REC_DECIMAL_LS)
@@ -11710,7 +11749,7 @@ Lng32 HSGlobalsClass::prepareToReadColumnsIntoMem(HSCursor *cursor, Int64 rows)
   if (samplingUsed && !sampleTableUsed)
      internalSortQuery.append(sampleOption->data());
 
-  internalSortQuery.append(" FOR READ UNCOMMITTED ACCESS");  
+  internalSortQuery.append(" FOR SKIP CONFLICT ACCESS");  
 
   LM->Log("Preparing rowset...");
   // Allocate descriptors and statements for CLI and prepare rowset by
@@ -11912,6 +11951,7 @@ Lng32 doSort(HSColGroupStruct *group)
 
       case REC_BYTE_F_ASCII:
       case REC_BYTE_F_DOUBLE:
+      case REC_BINARY_STRING:
       {
         //
         // Set the GLOBAL ISFixedChar instance with this column's values
@@ -11942,6 +11982,7 @@ Lng32 doSort(HSColGroupStruct *group)
       }
       case REC_BYTE_V_ASCII:
       case REC_BYTE_V_DOUBLE:
+      case REC_VARBINARY_STRING:
       {
         //
         // Set the GLOBAL ISVarChar instance with this column's values
@@ -12412,6 +12453,7 @@ Lng32 HSGlobalsClass::createStatsForColumn(HSColGroupStruct *group, Int64 rowsAl
 
       case REC_BYTE_F_ASCII:
       case REC_BYTE_F_DOUBLE:
+      case REC_BINARY_STRING:
         //
         // Set the GLOBAL ISFixedChar instance with this column's values
         //
@@ -12425,6 +12467,7 @@ Lng32 HSGlobalsClass::createStatsForColumn(HSColGroupStruct *group, Int64 rowsAl
 
       case REC_BYTE_V_ASCII:
       case REC_BYTE_V_DOUBLE:
+      case REC_VARBINARY_STRING:
         //
         // Set the GLOBAL ISVarChar instance with this column's values
         //
@@ -12775,7 +12818,7 @@ T HSGlobalsClass::convertToISdatatype(T* dummy,  // just so compiler can instant
         }
     }
   else if (col.datatype >= REC_MIN_DECIMAL && col.datatype <= REC_MAX_DECIMAL ||
-           col.datatype >= REC_MIN_BINARY && col.datatype <= REC_MAX_BINARY)    //scale > 0, per caller
+           col.datatype >= REC_MIN_BINARY_NUMERIC && col.datatype <= REC_MAX_BINARY_NUMERIC)    //scale > 0, per caller
     {
       // The fractional part has been normalized to use the full number of scale
       // digits (e.g., 123.1 is represented as "123.100" for a Numeric(6,3)).
@@ -13840,6 +13883,7 @@ Lng32 HSGlobalsClass::mergeDatasetsForIUS(
         break;
       case REC_BYTE_F_ASCII:
       case REC_BYTE_F_DOUBLE:
+      case REC_BINARY_STRING:
         {
           // Create an object to be used with the value iterator; does not own its content.
           IUSFixedChar fixedChar(FALSE);
@@ -13853,6 +13897,7 @@ Lng32 HSGlobalsClass::mergeDatasetsForIUS(
         break;
       case REC_BYTE_V_ASCII:
       case REC_BYTE_V_DOUBLE:
+      case REC_VARBINARY_STRING:
         {
           // Create an object to be used with the value iterator; does not own its content.
           IUSVarChar varChar(FALSE);
@@ -14158,6 +14203,7 @@ Int32 copyValue(ISFixedChar &value, char *valueBuff, const HSColumnStruct &colDe
   switch (colDesc.datatype)
     {
         case REC_BYTE_F_ASCII:
+        case REC_BINARY_STRING:
           *len = (short)MINOF(colDesc.length, maxCharBoundaryLen);
           memmove(valueBuff,
                  ((ISFixedChar*)((void*)&value))->getContent(), // make it work with template
@@ -14211,6 +14257,7 @@ Int32 copyValue(ISVarChar &value, char *valueBuff, const HSColumnStruct &colDesc
   switch (colDesc.datatype)
     {
         case REC_BYTE_V_ASCII:
+        case REC_VARBINARY_STRING:
           ptr = ((ISVarChar*)((void*)&value))->getContent(); // make it work with template
           *len = (short)MINOF(*(short*)ptr, maxCharBoundaryLen);
           memmove(valueBuff, ptr+sizeof(short), *len);
@@ -14253,8 +14300,8 @@ Int32 copyValue(Int64 value, char *valueBuff, const HSColumnStruct &colDesc, sho
     char *ptr = NULL;
     Int32 retcode = 0;  // status is good unless no case for type
 
-    if ((colDesc.datatype >= REC_MIN_BINARY &&
-        colDesc.datatype <= REC_MAX_BINARY)||
+    if ((colDesc.datatype >= REC_MIN_BINARY_NUMERIC &&
+        colDesc.datatype <= REC_MAX_BINARY_NUMERIC)||
         colDesc.datatype == REC_DECIMAL_LSE ||
         colDesc.datatype == REC_DECIMAL_UNSIGNED ||
         colDesc.datatype == REC_DECIMAL_LS)
@@ -14328,7 +14375,8 @@ Int32 copyValue(Int64 value, char *valueBuff, const HSColumnStruct &colDesc, sho
                            colDesc.scale, // display width for fractional seconds
                            // Fractional second; compute microseconds, remove trailing
                            // zeroes beyond the scale.
-                           (dtvals[6] * 1000 + dtvals[7]) / (Int32)pow(10, 6-colDesc.scale));
+                           (dtvals[6] * 1000 + dtvals[7]) / 
+                           (Int32)pow(10, 6 - MINOF(6, colDesc.scale)));
                  else
                    sprintf(valueBuff, "%04d-%02d-%02d %02d:%02d:%02d",
                                       dtvals[0], dtvals[1], dtvals[2],
@@ -14802,11 +14850,13 @@ Lng32 setBufferValue(MCWrapper& value,
                break;
              case REC_BYTE_F_ASCII:
              case REC_BYTE_F_DOUBLE:
+             case REC_BINARY_STRING:
                 ((MCFixedCharIterator*)(value.allCols_[i]))->copyToISFixChar(isf, value.index_);
                 retcode = copyValue(isf, valueBuff, mgroup->colSet[i], len);
                break;
              case REC_BYTE_V_ASCII:
              case REC_BYTE_V_DOUBLE:
+             case REC_VARBINARY_STRING:
                 ((MCVarCharIterator*)(value.allCols_[i]))->copyToISVarChar(isv, value.index_);
                 retcode = copyValue(isv, valueBuff, mgroup->colSet[i], len);
                break;
@@ -15957,8 +16007,7 @@ Lng32 doubleToHSDataBuffer(const double dbl, HSDataBuffer& dbf)
 /**********************************************************************/
 /* METHOD:  managePersistentSamples()                                 */
 /* PURPOSE: Create or delete persistent sample tables from update     */
-/*          statistics command line. These are NOT the automatically  */
-/*          managed persistent samples used by IUS.                   */
+/*          statistics command line.                                  */
 /* RETCODE:  0 - successful                                           */
 /*          -1 - failure                                              */
 /**********************************************************************/
@@ -15970,6 +16019,10 @@ Lng32 managePersistentSamples()
   if (!hs_globals) retcode = -1;
   else
   {
+    // initialize stats schema if our object is a Hive or native HBase table
+    retcode = hs_globals->InitializeStatsSchema();
+    HSHandleError(retcode);
+
     NAString table;
     Int64 sampleRows, tableRows;
     NABoolean isEstimate = FALSE;
@@ -15982,6 +16035,14 @@ Lng32 managePersistentSamples()
     if (errorCode)
       {
         *CmpCommon::diags() << DgSqlCode(-UERR_BAD_EST_ROWCOUNT) << DgInt0(errorCode) << DgInt1(breadCrumb);
+        return -1;
+      }
+
+    // If all the user columns in the table are LOB columns, our sample table
+    // would have zero columns. So return an error for that case.
+    if (hs_globals->objDef->allUserColumnsAreLOBs())
+      {
+        HSFuncMergeDiags(- UERR_ALL_LOB_COLUMNS);
         return -1;
       }
 
@@ -16026,6 +16087,7 @@ Lng32 managePersistentSamples()
     {
       if (hs_globals->optFlags & CREATE_SAMPLE_OPT)  /* create sample requested*/
       {
+        hs_globals->setHiveMaxStringLengthInBytes();
         if (sampleList->createAndInsert(hs_globals->objDef, table, 
                                         sampleRows, tableRows, 
                                         isEstimate,
@@ -16039,6 +16101,7 @@ Lng32 managePersistentSamples()
                              table.data(), intStr, retcode); 
             LM->Log(LM->msg);
           }
+        hs_globals->resetCQDs();
       }
       if (hs_globals->optFlags & REMOVE_SAMPLE_OPT)  /* remove sample requested*/
       {
@@ -16291,7 +16354,7 @@ void HSInMemoryTable::generateSelectDQuery(NAString& smplTable, NAString& queryT
 
   queryText.append(" WHERE ");
   queryText.append(whereCondition_);
-  queryText.append(" FOR READ UNCOMMITTED ACCESS");
+  queryText.append(" FOR SKIP CONFLICT ACCESS");
 }
 
 
@@ -16390,7 +16453,7 @@ HSInMemoryTable::generateSelectIQuery(NAString& smplTable,
   queryText.append(" FROM ");
   queryText.append(smplTable.data());
 
-  queryText.append("_I FOR READ UNCOMMITTED ACCESS");
+  queryText.append("_I FOR SKIP CONFLICT ACCESS");
 }
 
 
@@ -16682,6 +16745,7 @@ Lng32 HSGlobalsClass::processFastStatsBatch(CollIndex numCols, HSColGroupStruct*
 
         case REC_BYTE_F_ASCII:
         case REC_BYTE_F_DOUBLE:
+        case REC_BINARY_STRING:
           //group->fastStatsHist = new(STMTHEAP) FastStatsHist<ISFixedChar*>(group, cbf);
           LM->Log("char types not yet supported for fast-stats");
           retcode=-1;
@@ -16690,6 +16754,7 @@ Lng32 HSGlobalsClass::processFastStatsBatch(CollIndex numCols, HSColGroupStruct*
 
         case REC_BYTE_V_ASCII:
         case REC_BYTE_V_DOUBLE:
+        case REC_VARBINARY_STRING:
           //group->fastStatsHist = new(STMTHEAP) FastStatsHist<ISVarChar*>(group, cbf);
           LM->Log("char types not yet supported for fast-stats");
           retcode=-1;

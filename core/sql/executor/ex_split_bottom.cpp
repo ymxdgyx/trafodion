@@ -50,7 +50,7 @@
 #include  "str.h"
 #include  "exp_clause_derived.h"
 #include "ExSMGlobals.h"
-
+#include "ExpLOBaccess.h"
 
 // -----------------------------------------------------------------------
 // Methods for class ex_split_bottom_tdb
@@ -163,7 +163,7 @@ ex_split_bottom_tcb * ex_split_bottom_tdb::buildESPTcbTree(
 
   if (processLOB())
     {
-      glob->initLOBglobal(glob->getCliGlobals()->currContext());
+      glob->initLOBglobal(glob->getCliGlobals()->currContext(), useLibHdfs());
     }
 
   return result;
@@ -1939,10 +1939,6 @@ void SplitBottomRequestMessage::actOnReceive(IpcConnection * connection)
                 // does not appear that these two requests are distint here
                 // in this split bottom code.
 		stmtGlobals->castToExEspStmtGlobals()->setNoNewRequest(TRUE);
-
-		// wait for DML requests.
-		stmtGlobals->getIpcEnvironment()->getAllConnections()->
-		  waitForAllSqlTableConnections(stmtGlobals->getTransid());
 
                 // Change frag instance state.  Want to let other active
                 // frag instances work until all msgs to producer ESPs get 

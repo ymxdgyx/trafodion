@@ -426,7 +426,7 @@ NABoolean OptimizerSimulator::setOsimModeAndLogDir(osimMode targetMode, const ch
                   case CAPTURE: // OFF --> CAPTURE
                       setOsimLogdir(localDir);
                       setOsimMode(targetMode);//mode must be set before initialize
-                      NADefaults::updateSystemParameters(TRUE);
+                      NADefaults::updateSystemParameters(FALSE);
                       createLogDir();
                       initHashDictionaries();
                       initLogFilePaths();
@@ -449,7 +449,7 @@ NABoolean OptimizerSimulator::setOsimModeAndLogDir(osimMode targetMode, const ch
                       initHashDictionaries();
                       readSysCallLogfiles();
                       //reinitialize NAClusterInfoLinux and CQDs
-                      NADefaults::updateSystemParameters(TRUE);
+                      NADefaults::updateSystemParameters(FALSE);
                       //apply cqds
                       readAndSetCQDs();
                       setClusterInfoInitialized(TRUE);
@@ -541,31 +541,43 @@ void OptimizerSimulator::dumpDDLs(const QualifiedName & qualifiedName)
                                    <<"."<< qualifiedName.getSchemaName() 
                                    << ";" << endl;
         
+        // skippingSystemGeneratedIndex is set to TRUE to avoid generating redundant
+        // DDL for system-generated indexes
+        NABoolean skippingSystemGeneratedIndex = FALSE;
         outQueue->position();//rewind
         for (int i = 0; i < outQueue->numEntries(); i++) {
             OutputInfo * vi = (OutputInfo*)outQueue->getNext();
             char * ptr = vi->get(0);
-            // skip heading newline, and add a comment line
-            // for the DDL text upto the first trailing '\n'
-            Int32 ix = 0;
-            for(; ptr[ix]=='\n'; ix++);
-            if( strstr(ptr, "CREATE TABLE") ||
-                strstr(ptr, "CREATE INDEX") ||
-                strstr(ptr, "CREATE UNIQUE INDEX") ||
-                strstr(ptr, "ALTER TABLE")  )
+            if (strcmp(ptr,"\n-- The following index is a system created index --") == 0)
+              skippingSystemGeneratedIndex = TRUE;
 
+            if (!skippingSystemGeneratedIndex)
             {
-              (*createTable) << "--";
-              char* x = ptr+ix;
-              while ( (*x) && *x != '\n' ) {
-                (*createTable) << *x;
-                x++;
-              } 
-              (*createTable) << endl;
+                // skip heading newline, and add a comment line
+                // for the DDL text upto the first trailing '\n'
+                Int32 ix = 0;
+                for(; ptr[ix]=='\n'; ix++);
+                if( strstr(ptr, "CREATE TABLE") ||
+                    strstr(ptr, "CREATE INDEX") ||
+                    strstr(ptr, "CREATE UNIQUE INDEX") ||
+                    strstr(ptr, "ALTER TABLE")  )
+
+                {
+                  (*createTable) << "--";
+                  char* x = ptr+ix;
+                  while ( (*x) && *x != '\n' ) {
+                    (*createTable) << *x;
+                    x++;
+                  } 
+                  (*createTable) << endl;
+                }
+
+                //output ddl  
+                (*createTable) << ptr << endl;
             }
 
-            //output ddl    
-            (*createTable) << ptr << endl;
+            if (skippingSystemGeneratedIndex && (strcmp(ptr,";") == 0)) // at end of DDL to be skipped?
+              skippingSystemGeneratedIndex = FALSE;
         }
     }
 }
@@ -1542,7 +1554,13 @@ NABoolean OptimizerSimulator::massageTableUID(OsimHistogramEntry* entry, NAHashD
 void OptimizerSimulator::execHiveSQL(const char* hiveSQL)
 {
     if (HiveClient_JNI::executeHiveSQL(hiveSQL) != HVC_OK)
-      raiseOsimException("Error running hive SQL.");
+    {
+        NAString error("Error running hive SQL. ");
+        const char * jniErrorStr = GetCliGlobals()->getJniErrorStr();
+        if (jniErrorStr)
+          error += jniErrorStr;
+        raiseOsimException(error.data());
+    }
 }
 
 short OptimizerSimulator::loadHistogramsTable(NAString* modifiedPath, QualifiedName * qualifiedName, unsigned int bufLen, NABoolean isHive)

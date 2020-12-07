@@ -32,9 +32,11 @@
 #include "nskieee.h"
 #include "DiagFunctions.h"
 #include "csconvert.h" 
+#include "lob.h"
 #include <errno.h>
 
 #define MAXCHARLEN 32768 //32K
+#define OUTBUF_MAX 1024
 
 // for server2008 when using function pow() then throws STATUS_ILLEGAL_INSTRUCTION
 double pow(int base, short power, unsigned long *error)
@@ -153,7 +155,9 @@ unsigned long ODBC::BigNum_To_Ascii_Helper(char * source,
 // totalReturnedLength is a Input/Output parameter
 // *totalReturnedLength = Offset in Input
 // srcLength includes NULL for SQL_CHAR Type, hence srcLength is srcLength-1 for SQL_CHAR fields
-unsigned long ODBC::ConvertSQLToC(SQLINTEGER	ODBCAppVersion,
+unsigned long ODBC::ConvertSQLToC(CConnect *m_ConnectHandle,
+                            SQLHANDLE   InputHandle,
+                            SQLINTEGER	ODBCAppVersion,
 							DWORD		DataLangId,
 							SQLSMALLINT	SQLDataType,
 							SQLSMALLINT	ODBCDataType,
@@ -197,7 +201,7 @@ unsigned long ODBC::ConvertSQLToC(SQLINTEGER	ODBCAppVersion,
 	USHORT		usTmp;
 	SLONG		lTmp;
 	ULONG		ulTmp;
-	CHAR		cTmpBuf[MAX_DOUBLE_TO_CHAR_LEN];
+	CHAR		cTmpBuf[OUTBUF_MAX];
 	CHAR		cTmpBuf1[30];
 	__int64		tempVal64;
 	__int64		power;
@@ -373,6 +377,29 @@ unsigned long ODBC::ConvertSQLToC(SQLINTEGER	ODBCAppVersion,
 	if (srcDataPtr == NULL)
 		return IDS_HY_000;
 
+    if (SQLDataType == SQLTYPECODE_BLOB || SQLDataType == SQLTYPECODE_CLOB)
+    {
+        if (srcPrecision >= 0xFFFFFFF)
+        {
+            DataLen = *(int *)srcDataPtr;
+            DataPtr = (char *)srcDataPtr + 4;
+        }
+        else
+        {
+            DataLen = *(USHORT *)srcDataPtr;
+            DataPtr = (char *)srcDataPtr + 2;
+        }
+
+        IDL_long dataRead = targetLength;
+        if (getLobData(m_ConnectHandle, InputHandle, (IDL_string)DataPtr, DataLen, targetDataPtr, dataRead) != true)
+            return SQL_ERROR;
+
+        if (targetStrLenPtr != NULL)
+            *targetStrLenPtr = dataRead;
+
+        if (dataRead <= 0) return SQL_NO_DATA;
+        return SQL_SUCCESS;
+    }
 	
 //	if(charsetSupport)
 		LangId = LANG_NEUTRAL;
@@ -639,7 +666,7 @@ unsigned long ODBC::ConvertSQLToC(SQLINTEGER	ODBCAppVersion,
 				else {
 					dTmp = *(double *)srcDataPtr;
 //					_gcvt(dTmp, DBL_DIG, cTmpBuf);
-					if (!double_to_char (dTmp, DBL_DIG + 1, cTmpBuf, sizeof(cTmpBuf)))
+					if (!double_to_char (dTmp, DBL_DIG, cTmpBuf, sizeof(cTmpBuf)))
 						return IDS_22_001;
 				}
 			}
@@ -991,7 +1018,7 @@ unsigned long ODBC::ConvertSQLToC(SQLINTEGER	ODBCAppVersion,
 				else {
 					dTmp = *(double *)srcDataPtr;
 //					_gcvt(dTmp, DBL_DIG, cTmpBuf);
-                    if (!double_to_char(dTmp, DBL_DIG + 1, cTmpBuf, sizeof(cTmpBuf)))
+                    if (!double_to_char(dTmp, DBL_DIG, cTmpBuf, sizeof(cTmpBuf)))
 						return IDS_22_001;
 				}
 			}

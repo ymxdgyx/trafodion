@@ -27,9 +27,9 @@ FLAGS = $(CFLAGS)
 #FLAGS+= -fdiagnostics-show-option
 FLAGS+= -Wall -Wextra
 
-LIBS+= -L$(LIBEXPDIR) -L$(ZOOKEEPER_DIR)/lib -lsqlite3 -ltrafconfig
+LIBS+= -L$(LIBEXPDIR) -L$(ZOOKEEPER_DIR)/lib -lsqlite3 -ltrafconfig -lpthread
 
-INCLUDES =  -I$(INCEXPDIR) -I../linux
+INCLUDES =  -I$(INCEXPDIR) -I../linux -I../../src/trafconf
 
 MONOUTDIR = ../linux/$(OUTDIR)
 
@@ -58,10 +58,12 @@ TEST_PGMS	+= $(OUTDIR)/persistentProc
 TEST_PGMS	+= $(OUTDIR)/procCreate
 TEST_PGMS	+= $(OUTDIR)/dtmCtrl
 TEST_PGMS	+= $(OUTDIR)/dtmProc
-TEST_PGMS	+= $(OUTDIR)/spxCtrl
-TEST_PGMS	+= $(OUTDIR)/spxProc
+TEST_PGMS	+= $(OUTDIR)/dtm
+#TEST_PGMS	+= $(OUTDIR)/spxCtrl
+#TEST_PGMS	+= $(OUTDIR)/spxProc
 #TEST_PGMS	+= $(OUTDIR)/tmSyncTest
 #TEST_PGMS	+= $(OUTDIR)/tmSyncCtrl
+#TEST_PGMS	+= $(OUTDIR)/dummy
 
 # Compile rules for building tests
 $(OUTDIR)/%:%.cxx $(CLIENTOBJS)
@@ -98,14 +100,14 @@ $(OUTDIR)/deathUnreg: deathUnreg.cxx $(CLIENTOBJS)
 $(OUTDIR)/deathWatch: deathWatch.cxx $(CLIENTOBJS)
 $(OUTDIR)/persistentProc: persistentProc.cxx $(CLIENTOBJS)
 $(OUTDIR)/procCreate : procCreate.cxx $(CLIENTOBJS)
-$(OUTDIR)/dtmCtrl : spxCtrl.cxx $(CLIENTOBJS)
-$(OUTDIR)/dtmProc : spxProc.cxx $(CLIENTOBJS)
-$(OUTDIR)/spxCtrl : spxCtrl.cxx $(CLIENTOBJS)
-$(OUTDIR)/spxProc : spxProc.cxx $(CLIENTOBJS)
-$(OUTDIR)/tmSyncTest: tmSyncTest.cxx  $(CLIENTOBJS)
-$(OUTDIR)/tmSyncCtrl: tmSyncCtrl.cxx  $(CLIENTOBJS)
+$(OUTDIR)/dtmCtrl : dtmCtrl.cxx $(CLIENTOBJS)
+$(OUTDIR)/dtmProc : dtmProc.cxx $(CLIENTOBJS)
+$(OUTDIR)/montestutil.o: montestutil.cxx ../linux/msgdef.h
 
-montestutil.cxx: montestutil.h
+#$(OUTDIR)/spxCtrl : spxCtrl.cxx $(CLIENTOBJS)
+#$(OUTDIR)/spxProc : spxProc.cxx $(CLIENTOBJS)
+#$(OUTDIR)/tmSyncTest: tmSyncTest.cxx  $(CLIENTOBJS)
+#$(OUTDIR)/tmSyncCtrl: tmSyncCtrl.cxx  $(CLIENTOBJS)
 
 clean:
 	@echo -rm -f $(OUTDIR)/*.o $(TEST_PGMS)

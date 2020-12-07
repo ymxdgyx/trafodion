@@ -280,6 +280,13 @@ def user_input(options, prompt_mode=True, pwd=''):
         cfgs['node_list'] = ','.join(rsnodes)
         cfgs['first_rsnode'] = rsnodes[0] # first regionserver node
 
+        cfgs['traf_cluster_id'] = '1'
+        cfgs['traf_instance_id'] = '1'
+        cfgs['traf_instance_name'] = 'TRAFODION'
+
+    ### set Cluster ID
+#    g('traf_cluster_id')
+
     # check node connection
     for node in cfgs['node_list'].split(','):
         rc = os.system('ping -c 1 %s >/dev/null 2>&1' % node)
@@ -361,6 +368,8 @@ def user_input(options, prompt_mode=True, pwd=''):
         g('traf_pwd')
     g('dcs_cnt_per_node')
     g('scratch_locs')
+    g('traf_log')
+    g('traf_var')
     g('traf_start')
 
     # kerberos

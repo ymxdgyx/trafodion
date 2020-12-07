@@ -69,6 +69,8 @@ extern "C" {
 }
 #include "fs/feerrors.h"
 
+#include "trafconf/trafconfig.h"  // to get TC_PROCESSOR_NAME_MAX
+
 // Uncomment the next line to debug IPC problems (log of client's I/O)
 // #define LOG_IPC
 
@@ -212,14 +214,10 @@ NABoolean GuaProcessHandle::compare(const GuaProcessHandle &other) const
 
 NABoolean GuaProcessHandle::fromAscii(const char *ascii)
 {
- SB_Phandle_Type *tempPhandle;
 
- tempPhandle = get_phandle_with_retry((char *)ascii);
-
- if (!tempPhandle)
+  int retcode = get_phandle_with_retry((char *)ascii, &phandle_);
+  if (retcode != FEOK)
     return FALSE;
-
- memcpy ((void *)&phandle_, (void *)tempPhandle, sizeof(SB_Phandle_Type));
   return TRUE; 
 }
 
@@ -3405,7 +3403,6 @@ IpcGuardianServer::IpcGuardianServer(
      const char     * nodeName,
      const char     * className,
      IpcCpuNum      cpuNum,
-     IpcPriority    priority,
      IpcServerAllocationMethod allocMethod,
      short          uniqueTag,
      NABoolean      usesTransactions,
@@ -3418,11 +3415,11 @@ IpcGuardianServer::IpcGuardianServer(
 					       serverClass)
 {
   serverState_                 = INITIAL;
-  nodeName_                    = nodeName;
+  nodeName_                    = NULL;
   className_                   = className;
-  cpuNum_                   = cpuNum;
+  cpuNum_                      = cpuNum;
+  actualCpuNum_                = cpuNum;
   requestedCpuDown_            = FALSE;
-  priority_                    = priority;
   allocMethod_                 = allocMethod;
   uniqueTag_                   = uniqueTag;
   usesTransactions_            = usesTransactions;
@@ -3535,7 +3532,7 @@ short IpcGuardianServer::workOnStartup(IpcTimeout timeout,
     {
       if (diags && (allocMethod_ != IPC_USE_PROCESS))
 	{
-	  if (!(**diags).contains(-2013))
+	  if ((!(**diags).contains(-2013)) && (!(**diags).contains(-2012))) // avoid generating redundant error
 	    {
 	      IpcAllocateDiagsArea(*diags,diagsHeap);
 
@@ -3950,6 +3947,7 @@ void IpcGuardianServer::launchNSKLiteProcess(ComDiagsArea **diags,
       bool retryStartProcess;
       do
       {
+        actualCpuNum_ = server_nid;  // save requested CPU (might be IPC_CPU_DONT_CARE)
         returnValue =  msg_mon_start_process_nowait_cb2(NewProcessCallback,
 			    prog,           /* prog */
 			    process_name,   /* name */
@@ -3969,6 +3967,8 @@ void IpcGuardianServer::launchNSKLiteProcess(ComDiagsArea **diags,
 			    NULL,
 			    unhooked_);
         ESP_TRACE2("MT: Back MMSPNW, svr: %p\n", &nowaitedEspStartup_);
+        if (actualCpuNum_ == IPC_CPU_DONT_CARE)
+          actualCpuNum_ = server_nid;  // msg_mon_start_process_nowait_cb2 might have assigned server_nid
         if (returnValue == XZFIL_ERR_FSERR && server_nid != -1)
         {
           server_nid = -1;
@@ -3991,6 +3991,7 @@ void IpcGuardianServer::launchNSKLiteProcess(ComDiagsArea **diags,
          strncpy (process_name, processName_, 99);
       }
 
+      actualCpuNum_ = server_nid;  // save requested CPU (might be IPC_CPU_DONT_CARE)
       Int32 returnValue = msg_mon_start_process2(
 			    prog,           /* prog */
 			    process_name,   /* name */
@@ -4010,6 +4011,8 @@ void IpcGuardianServer::launchNSKLiteProcess(ComDiagsArea **diags,
 			    NULL,
 			    unhooked_);
       procCreateError_ = returnValue;
+      if (actualCpuNum_ == IPC_CPU_DONT_CARE)
+        actualCpuNum_ = server_nid;  // msg_mon_start_process2 might have assigned server_nid
     }
   
   
@@ -4110,18 +4113,16 @@ void IpcGuardianServer::spawnProcess(ComDiagsArea **diags,
 void IpcGuardianServer::useProcess(ComDiagsArea **diags,
 				      CollHeap *diagsHeap)
 {
-  NSK_PORT_HANDLE *procHandle;
-  NSK_PORT_HANDLE procHandleCopy;
+  SB_Phandle_Type procHandle;
   short usedlength;
   char processName[50];
   char *tmpProcessName;
-  short rc;
+  int rc;
 
   if (processName_ == NULL)
   {
 
-    tmpProcessName = getServerClass()->getProcessName(nodeName_, 
-        (short)str_len(nodeName_), (short)cpuNum_, processName);
+    tmpProcessName = getServerClass()->getProcessName((short)cpuNum_, processName);
     // use diagsHeap for the time being
     Int32 len = str_len(processName);
 
@@ -4135,13 +4136,8 @@ void IpcGuardianServer::useProcess(ComDiagsArea **diags,
   short i = 0;
   while (i < 3)
   {
-    short gprc = 0;
-    procHandle = get_phandle_with_retry(tmpProcessName, &gprc);
-    if (procHandle != NULL)
-      rc = 0;
-    else
-      rc = gprc;
-    if ((rc != 0) || (procHandle == NULL))
+    rc = get_phandle_with_retry(tmpProcessName, &procHandle);
+    if (rc != FEOK)
     {
       serverState_ = ERROR_STATE;
       guardianError_ = rc;
@@ -4157,7 +4153,7 @@ void IpcGuardianServer::useProcess(ComDiagsArea **diags,
     else
     {
       //Phandle wrapper in porting layer
-      NAProcessHandle phandle(procHandle);
+      NAProcessHandle phandle(&procHandle);
 
       rc = phandle.decompose();
       if (rc != 0)
@@ -4174,9 +4170,7 @@ void IpcGuardianServer::useProcess(ComDiagsArea **diags,
       }
     }
 
-    memcpy(&procHandleCopy, procHandle, sizeof(NSK_PORT_HANDLE));
-    IpcProcessId serverProcId(
-         (const GuaProcessHandle &)procHandleCopy);
+    IpcProcessId serverProcId((const GuaProcessHandle &)procHandle);
 	      
     controlConnection_ = new(getServerClass()->getEnv()->getHeap())
       GuaConnectionToServer(getServerClass()->getEnv(),
@@ -4190,9 +4184,6 @@ void IpcGuardianServer::useProcess(ComDiagsArea **diags,
           castToGuaConnectionToServer()->getGuardianError();
       delete controlConnection_;
       controlConnection_ = NULL;
-      // clear phandle cache -- ALM CR8248
-      msg_set_phandle((char *)processName_, NULL); 
-      msg_mon_close_process(procHandle);
       DELAY(10);
     }
     else
@@ -4216,11 +4207,6 @@ void IpcGuardianServer::useProcess(ComDiagsArea **diags,
 }
 
 
-short IpcGuardianServer::changePriority(IpcPriority priority, NABoolean isDelta)
-{
-  return 0;
-}
-					
 NABoolean IpcGuardianServer::serverDied()
 {
   const GuaProcessHandle &ph = getServerId().getPhandle();
@@ -4259,12 +4245,42 @@ void IpcGuardianServer::populateDiagsAreaFromTPCError(ComDiagsArea *&diags,
       break;
     }
 
-  char location[100];
+  char location[TC_PROCESSOR_NAME_MAX];
   getCpuLocationString(location);
   (*diags) << DgString1(location);
 
   // the $string0 parameter always identifies the program file name
   (*diags) <<  DgString0(progFileName_);
+
+  const char * interpretiveText = NULL; // for 2012 errors, we add interpretive text
+
+  switch (procCreateError_)
+    {
+    case XZFIL_ERR_NOSUCHDEV:  //  14
+    case XZFIL_ERR_FSERR:      //  53
+    case XZFIL_ERR_DEVERR:     // 190
+      interpretiveText = "Could not access executable file.";
+      break;
+
+    case XZFIL_ERR_NOBUFSPACE: //  22
+      interpretiveText = "Insufficient buffer space.";
+      break;
+
+    case XZFIL_ERR_BADREPLY:   //  74
+      interpretiveText = "Incorrect reply received from monitor.";
+      break;
+
+    case XZFIL_ERR_OVERRUN:    // 121
+      interpretiveText = "A message overrun occurred while communicating with the monitor.";
+      break;
+   
+    default:
+      interpretiveText = NULL;
+      break;
+    }
+  
+  if (interpretiveText)
+    (*diags) << DgString2(interpretiveText);
 }
 
 void IpcGuardianServer::getCpuLocationString(char *location)
@@ -4272,12 +4288,26 @@ void IpcGuardianServer::getCpuLocationString(char *location)
   if (!location)
     return;
 
-  strcpy(location, "\\");
-  strcat(location, nodeName_);
-  if (cpuNum_ != IPC_CPU_DONT_CARE)
+  // populate the nodeName_ if it has not already been captured
+  if ((nodeName_ == NULL) && (actualCpuNum_ != IPC_CPU_DONT_CARE))
     {
-      UInt32 len = strlen(location);
-      str_sprintf(&location[len], " cpu %d", cpuNum_);
+      // populate nodeName_ from the Trafodion node number that we actually attempted to use 
+      MS_Mon_Node_Info_Type nodeInfo;
+      Int32 rc = msg_mon_get_node_info_detail(actualCpuNum_, &nodeInfo);
+      if (rc == 0)
+        {
+          nodeName_ =  new (getServerClass()->getEnv()->getHeap()) char[TC_PROCESSOR_NAME_MAX];
+          strcpy(nodeName_, nodeInfo.node[0].node_name);
+        }
+    }
+
+  if (nodeName_)
+    {
+      strcpy(location,nodeName_);
+    }
+  else
+    {
+      strcpy(location,"an unspecified node");
     }
 }
 

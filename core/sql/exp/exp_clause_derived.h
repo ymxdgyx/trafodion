@@ -41,9 +41,12 @@
 #ifndef EXP_CLAUSE_DERIVED_H
 #define EXP_CLAUSE_DERIVED_H
 
+#include <sys/types.h>
+#include <regex.h>
 #include "exp_clause.h"
 #include "exp_like.h"
 #include <byteswap.h>
+#include "NAStringDef.h"
 
 
 #define instrAndText(a) a, #a
@@ -487,7 +490,9 @@ public:
 
   // Construction
   //
-  ex_arith_clause(){};
+  ex_arith_clause() 
+      { setAugmentedAssignOperation(TRUE); }
+
   ex_arith_clause(OperatorTypeEnum oper_type,
 			     Attributes ** attr,
 			     Space * space,
@@ -587,7 +592,8 @@ public:
 private:
   enum
   {
-    DIV_TO_DOWNSCALE = 0x01
+    DIV_TO_DOWNSCALE = 0x01,
+    ALLOW_AUGMENTED_ASSIGN_OPERATION = 0x02
   };
 
   char filler[4];             // 00-03
@@ -616,6 +622,12 @@ private:
   { return (flags_ & DIV_TO_DOWNSCALE) != 0;}
   void setDivToDownscale(NABoolean v)      
   { (v ? flags_ |= DIV_TO_DOWNSCALE : flags_ &= ~DIV_TO_DOWNSCALE); }
+public:
+  NABoolean isAugmentedAssignOperation()
+  { return (flags_ & ALLOW_AUGMENTED_ASSIGN_OPERATION) != 0;}
+
+  void setAugmentedAssignOperation(NABoolean v) 
+  { (v ? flags_ |= ALLOW_AUGMENTED_ASSIGN_OPERATION : flags_ &= ~ALLOW_AUGMENTED_ASSIGN_OPERATION); }
   
 };
 
@@ -656,6 +668,7 @@ public:
   }
 
   virtual short getClassSize() { return (short)sizeof(*this); }
+
   // ---------------------------------------------------------------------
   
 private:   
@@ -1180,7 +1193,10 @@ enum CompInstruction {
   GE_BIN8S_BIN8S      =189,
   GE_BIN8U_BIN8U      =190,
 
-  COMP_NOT_SUPPORTED  =191
+  // comparison between sql binary/varbinary datatypes
+  BINARY_COMP         =191,
+
+  COMP_NOT_SUPPORTED  =192
 };
 
 class  ex_comp_clause : public ex_clause {
@@ -1693,7 +1709,17 @@ enum ConvInstruction {
   CONV_NUMERIC_BIN8U                    =284,
 
   CONV_BIN8S_BIN8U                     =285,
-  CONV_BIN8U_BIN8S                     =286
+  CONV_BIN8U_BIN8S                     =286,
+
+  CONV_BINARY_TO_BINARY                =287,
+  CONV_BINARY_TO_VARBINARY             =288,
+  CONV_VARBINARY_TO_BINARY             =289,
+  CONV_VARBINARY_TO_VARBINARY          =290,
+
+  CONV_BINARY_TO_OTHER                 =291,
+  CONV_VARBINARY_TO_OTHER              =292,
+  CONV_OTHER_TO_BINARY                 =293,
+  CONV_OTHER_TO_VARBINARY              =294
 };
 
 class  ex_conv_clause : public ex_clause {
@@ -2535,7 +2561,8 @@ class  ExRegexpClauseChar : public ExRegexpClauseBase {
 public:
   // Construction
   //
-  ExRegexpClauseChar() {};
+  ExRegexpClauseChar() { rpattern_ = ""; };
+  ~ExRegexpClauseChar() { if(rpattern_ != "") regfree(&reg); };
   ExRegexpClauseChar(OperatorTypeEnum oper_type, 
 			    short num_operands,
 			    Attributes ** attr,
@@ -2573,6 +2600,10 @@ public:
 
   virtual short getClassSize() { return (short)sizeof(*this); }
   // ---------------------------------------------------------------------
+
+  regex_t reg;
+
+  NAString rpattern_; //previous pattern
 
 private:
 

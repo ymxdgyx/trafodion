@@ -47,7 +47,6 @@ class ExHbaseAccessTcb;
 // Classes referenced in this file
 // -----------------------------------------------------------------------
 class ex_tcb;
-class ExHbaseAccessStats;
 class ExpHbaseInterface;
 class ExHbaseAccessSelectTcb;
 class ExHbaseAccessUMDTcb;
@@ -180,6 +179,8 @@ public:
                                Lng32 instId,
                                char *& loggingFileName);
   static short setupError(NAHeap *heap, ex_queue_pair &qparent, Lng32 retcode, const char * str, const char * str2 = NULL);
+
+  int compareRowIds();
 
 protected:
 

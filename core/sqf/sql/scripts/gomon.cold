@@ -1,6 +1,5 @@
 #!/bin/bash
 #
-#/bin/sh
 # @@@ START COPYRIGHT @@@
 #
 # Licensed to the Apache Software Foundation (ASF) under one
@@ -23,86 +22,107 @@
 # @@@ END COPYRIGHT @@@
 #
 
-
-if [ -f $TRAF_HOME/sql/scripts/sqshell.env ]; then
-    . $TRAF_HOME/sql/scripts/sqshell.env
-fi
+# Set the number of nodes configured
+let node_count=`trafconf -nid-count`
 
 if [[ -z ${TRAF_AGENT} ]]; then
-   echo  "***"
-   echo  "*** Starting Monitor processes"
-   echo  "***"
 
+   # Set monitor to run in agent mode
+   if  [[ -n "$node_count" ]] && [[ "$node_count" -gt "1" ]]; then    
+      export SQ_MON_CREATOR=MPIRUN
+   fi
+
+   if [[ "$SQ_MON_CREATOR" == "MPIRUN" ]]; then
+      export SQ_MON_RUN_MODE=${SQ_MON_RUN_MODE:-AGENT}
+      export MONITOR_COMM_PORT=${MONITOR_COMM_PORT:-23390}
+      echo  "***"
+      echo  "***" `date`  " - SQ_MON_CREATOR  = $SQ_MON_CREATOR"
+      echo  "***" `date`  " - SQ_MON_RUN_MODE = $SQ_MON_RUN_MODE"
+   fi
+
+   echo  "***"
+   echo  "***" `date`  " - Starting Monitor processes"
+   echo  "***"
+   
 sqshell <<eof 
 
 ! Start the monitor processes across the cluster
 startup
 
-exit
-eof
-else
-   echo  "***"
-   echo  "*** Waiting for Monitor processes to start"
-   echo  "***"
-sqshell <<eof 
-
-! Waiting for the monitor processes to start across the cluster
-delay 15
-
-exit
-eof
-
-sqshell -c node info
-
-fi
-
-sqcheckmon
-let lv_checkmon_ret=$?
-if [ $lv_checkmon_ret '==' 0 ]; then
-   echo "Continuing with the Startup..."
-   echo
-else
-   echo "Aborting startup."
-   more $TRAF_HOME/logs/sqcheckmon.log
-   exit 1
-fi
-
-# If the 'shell.env' file does not exist, we are in a real cluster
-if [ -e $TRAF_HOME/sql/scripts/sqshell.env ]; then
-   sqshell -c set CLUSTERNAME=$CLUSTERNAME
-fi
-
-sqshell -a <<eof
-
-set SQ_MBTYPE=64d
-set MY_NODES=$MY_NODES
+set SQ_MBTYPE=$SQ_MBTYPE
 set JAVA_HOME=$JAVA_HOME
-set MY_CLUSTER_ID=$MY_CLUSTER_ID
+set TRAF_CLUSTER_ID=$TRAF_CLUSTER_ID
 set TRAF_FOUNDATION_READY=0
 
 exit
 eof
 
-# Starting TSID
+else
+   echo `date`" - Waiting for the Trafodion monitor process..."
 
+   let monitor_ready=0
+
+   # 5 seconds, iterations 240 = 20 minutes
+   if sqcheckmon -s up -i 240 -d 5
+   then
+      let ++monitor_ready
+   fi
+
+   if [[ $monitor_ready -lt 1 ]]; then
+      echo `date`" - Aborting startup!"
+      cat $TRAF_LOG/sqcheckmon.log
+      exit 1
+   else
+
+# Set initial registry values
+sqshell -a <<eof
+
+set SQ_MBTYPE=$SQ_MBTYPE
+set JAVA_HOME=$JAVA_HOME
+set TRAF_CLUSTER_ID=$TRAF_CLUSTER_ID
+set TRAF_FOUNDATION_READY=0
+
+exit
+eof
+   fi
+fi
+
+echo `date`" - Delaying 15 seconds before continuing with Startup"
+sleep 15
+echo `date`" - Continuing with Startup ..."
+echo
+
+if (
+    [[ $TRAF_AGENT == "CM" ]] ||
+    [[ $SQ_MON_RUN_MODE == "AGENT" ]]
+   )
+then
+   export TRAF_SCALING_FACTOR=${TRAF_SCALING_FACTOR:-0.75}
+
+   #echo  "***"
+   #echo  "*** node_count = ${node_count}"
+   #echo  "*** TRAF_SCALING_FACTOR = ${TRAF_SCALING_FACTOR}"
+
+   # allow time for other nodes to integrate, scaled to cluster size
+   # scaling factor may be non-integer, so use awk to evaluate
+   start_delay=$( echo "${node_count} ${TRAF_SCALING_FACTOR}" | awk '{print $1 * $2}')
+   echo  "***"
+   echo  "***" %`date`" - Waiting ${start_delay} seconds for Monitor processes to integrate"
+   echo  "***"
+   sleep $start_delay
+fi
+
+sqshell -c node info
+
+# Starting TSID
+echo  "***"
+echo  "***" `date`  " - Starting Trasaction Id Server (TSID)"
+echo  "***"
 idtmstart
 sqshell -c delay 1
 
 echo  "***"
-echo  "*** Starting Cluster Monitor"
-echo  "***"
-
-cmonstart
-sqshell -c delay 1
-
-echo  "***"
-echo  "*** Starting Node Monitors"
-echo  "***"
-
-nmonstart
-
-echo  "***"
-echo  "*** Starting Distributed Transaction Manager (DTM)"
+echo  "***" `date`  " - Starting Distributed Transaction Manager (DTM)"
 echo  "***"
 
 tmstart
@@ -126,7 +146,7 @@ fi
 
 
 echo  "***"
-echo  "*** Trafodion Foundation Services are ready!"
+echo  "***" `date`  " - Trafodion Foundation Services are ready!"
 echo  "***"
 sqshell -a <<eof
 

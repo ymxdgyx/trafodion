@@ -250,6 +250,10 @@ public:
   // a virtual function for performing name binding within the query tree
   virtual RelExpr * bindNode(BindWA *bindWAPtr);
 
+  // bind time method that rewrites subqueries with [first n] + ORDER BY 
+  // into OLAP subqueries
+  RelExpr * rewriteFirstNOrderBySubquery(BindWA *bindWAPtr);
+
   // a virtual function to get addressability to the list of output values
   virtual ItemExpr * selectList();
 
@@ -337,9 +341,11 @@ public:
   // get a printable string that identifies the operator
   virtual const NAString getText() const;
 
- // set display on/off.
+  // set display on/off.
   void            setDisplayTree(NABoolean val) {displayTree_ = val;}
   NABoolean       getDisplayTree() const 	{return displayTree_;}
+  void            setExeDisplay(NABoolean val)  {exeDisplay_ = val;}
+  NABoolean       getExeDisplay() const 	{return exeDisplay_;}
 
   ExplainTuple *addSpecificExplainInfo(ExplainTupleMaster *explainTuple,
 					      ComTdb * tdb,
@@ -364,7 +370,8 @@ public:
   NABoolean checkPrivileges(BindWA* bindWA);
   void findKeyAndInsertInOutputList( ComSecurityKeySet KeysForTab
                                    , const uint32_t userHashValue
-                                   , const PrivType which );
+                                   , const PrivType which
+                                   , BindWA* bindWA );
 
   //++ MVs
   NABoolean hasMvBindContext() const;
@@ -624,9 +631,9 @@ public:
   // at bind time from the child update/delete node.
   ItemExpr * currOfCursorName_;
 
-  // contains the
   NABoolean  displayTree_; // if set, this tree needs to be displayed.
                            // Set by parser on seeing a DISPLAY command.
+  NABoolean  exeDisplay_;  // if set, display query execution in the GUI
 
   // this flag is set to TRUE if this is an update, delete or insert
   // query. This information is needed at runtime to rollback/abort
@@ -949,15 +956,14 @@ public:
   // constructor
   TupleList(ItemExpr *tupleListExpr,
 	CollHeap *oHeap = CmpCommon::statementHeap())
-    : Tuple(REL_TUPLE_LIST,tupleListExpr, oHeap), numberOfTuples_(-1), createdForInList_(FALSE)
+    : Tuple(REL_TUPLE_LIST,tupleListExpr, oHeap), numberOfTuples_(-1), 
+      flags_(0)
   {}
 
   TupleList(const TupleList & other);
 
   ValueIdList & castToList() { return castToList_; }
   Lng32 numTuples() const { return numberOfTuples_; }
-  NABoolean createdForInList() const { return createdForInList_; }
-  void setCreatedForInList (NABoolean flag) { createdForInList_ = flag; }
 
   // a virtual function for performing name binding within the query tree
   RelExpr * bindNode(BindWA *bindWAPtr);
@@ -1001,7 +1007,25 @@ public:
   // set vidlist = ith tuple of this tuplelist and return TRUE
   RelExpr* getTuple(BindWA *bindWA, ValueIdList& vidList, CollIndex i);
 
+  NABoolean createdForInList() { return (flags_ & CREATED_FOR_IN_LIST) != 0; }
+  void setCreatedForInList(NABoolean v)
+  { (v ? flags_ |= CREATED_FOR_IN_LIST : flags_ &= ~CREATED_FOR_IN_LIST); }
+
+  NABoolean hiveTextInsert() { return (flags_ & HIVE_TEXT_INSERT) != 0; }
+  void setHiveTextInsert(NABoolean v)
+  { (v ? flags_ |= HIVE_TEXT_INSERT : flags_ &= ~HIVE_TEXT_INSERT); }
+
+  NABoolean castTo() { return (flags_ & CAST_TO) != 0; }
+  void setCastTo(NABoolean v)
+  { (v ? flags_ |= CAST_TO : flags_ &= ~CAST_TO); }
+
 private:
+  enum Flags
+    {
+      CREATED_FOR_IN_LIST   = 0x0001,
+      HIVE_TEXT_INSERT      = 0x0002,
+      CAST_TO               = 0x0004
+    };
 
   // set needsFixup to TRUE iff tuplelist needs INFER_CHARSET fixup
   RelExpr* needsCharSetFixup(BindWA *bindWA,
@@ -1031,7 +1055,8 @@ private:
   // converted before returning. Used (currently) if this list will be
   // inserted into a table.
   ValueIdList castToList_;
-  NABoolean createdForInList_;
+
+  Int32 flags_;
 }; // class TupleList
 
 // -----------------------------------------------------------------------
@@ -1662,6 +1687,7 @@ public:
   NABoolean isFirstN()                          { return isFirstN_; }
 
   ValueIdList & reqdOrder()                     { return reqdOrder_; }
+  ValueIdList & reqdOrderInSubquery()           { return reqdOrderInSubquery_; }
 
 private:
   // Otherwise, return firstNRows_ at runtime.
@@ -1673,6 +1699,7 @@ private:
   // Optional ORDER BY to force ordering before applying First N; populated
   // at normalizeNode time.
   ValueIdList reqdOrder_;
+  ValueIdList reqdOrderInSubquery_;
 
 }; // class FirstN
 

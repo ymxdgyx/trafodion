@@ -25,19 +25,26 @@
 
 using namespace std;
 
+#ifndef NAMESERVER_PROCESS
 #include <ctype.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <assert.h>
+#endif
 #include <sys/epoll.h>
+#ifndef NAMESERVER_PROCESS
 #include <errno.h>
 #include <stdlib.h>
+#endif
 #include <string.h>
+#ifndef NAMESERVER_PROCESS
 #include <sys/time.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
+#endif
 
+#ifndef NAMESERVER_PROCESS
 #include "monlogging.h"
 #include "montrace.h"
 #include "monitor.h"
@@ -47,11 +54,15 @@ using namespace std;
 #include "pnode.h"
 #include "lock.h"
 #include "mlio.h"
+#include "msgdef.h"
 #include "redirector.h"
 #include "replicate.h"
 #include "monsonar.h"
 #include "reqqueue.h"
+#include "ptpclient.h"
+#endif
 
+#ifndef NAMESERVER_PROCESS
 extern CNode *MyNode;
 extern sigset_t SigSet;
 extern CRedirector Redirector;
@@ -61,6 +72,10 @@ extern CNodeContainer *Nodes;
 extern CReplicate Replicator;
 extern CMonStats *MonStats;
 extern CReqQueue ReqQueue;
+extern CPtpClient *PtpClient;
+extern bool NameServerEnabled;
+extern const char *StateString( STATE state);
+#endif
 
 const char *EpollEventString( __uint32_t events )
 {
@@ -127,6 +142,7 @@ const char *EpollOpString( int op )
     return( str );
 }
 
+#ifndef NAMESERVER_PROCESS
 CRedirect::CRedirect(int nid, int pid)
                     :fd_(-1)
                     ,activity_(false)
@@ -550,7 +566,10 @@ CRedirectAncestorStdin::~CRedirectAncestorStdin()
     TRACE_ENTRY;
 
     // Delete pending buffer (if any)
-    delete buffer_;
+    if (buffer_)
+    {
+        delete [] buffer_;
+    }
 
     // Delete queued data (if any)
     while (!ioDataList_.empty())
@@ -558,7 +577,7 @@ CRedirectAncestorStdin::~CRedirectAncestorStdin()
         // Get first data buffer from list
         buffer_ = ioDataList_.front();
         ioDataList_.pop_front();
-        delete buffer_;
+        delete [] buffer_;
     }
 
     // Alter eyecatcher sequence as a debugging aid to identify deleted object
@@ -632,7 +651,7 @@ int CRedirectAncestorStdin::handleInput()
             retVal = -1;
 
             bufferPos_ = 0;
-            delete buffer_;
+            delete [] buffer_;
             buffer_ = NULL;
 
             reqType = STDIN_FLOW_ON;
@@ -645,16 +664,29 @@ int CRedirectAncestorStdin::handleInput()
         else
         {   // Have written all data, will need to get more.
             bufferPos_ = 0;
-            delete buffer_;
+            delete [] buffer_;
             buffer_ = NULL;
 
             reqType = STDIN_FLOW_ON;
         }
 
-    CReplStdinReq *repl
-        = new CReplStdinReq(MyPNID, pid_, reqType, ancestorNid_, ancestorPid_ );
-    Replicator.addItem(repl);
-
+        if (NameServerEnabled)
+        {
+            PtpClient->ProcessStdInReq( MyPNID
+                                      , pid_
+                                      , reqType
+                                      , ancestorNid_
+                                      , ancestorPid_  );
+        }
+        else
+        {
+            CReplStdinReq *repl = new CReplStdinReq( MyPNID
+                                                   , pid_
+                                                   , reqType
+                                                   , ancestorNid_
+                                                   , ancestorPid_ );
+            Replicator.addItem(repl);
+        }
     }
 
     TRACE_EXIT;
@@ -765,7 +797,7 @@ CRedirectStdinRemote::CRedirectStdinRemote(const char *filename,
                 char buf[MON_STRING_BUF_SIZE];
                 sprintf(buf, "[%s], %s is an unsupported file type.\n",
                         method_name, filename);
-                mon_log_write(MON_REDIR_STDINREMOTE_2, SQ_LOG_ERR, buf);
+                mon_log_write(MON_REDIR_STDINREMOTE_2, SQ_LOG_INFO, buf);
 
                 close(fd_);
                 fd_ = -1;
@@ -845,9 +877,24 @@ void CRedirectStdinRemote::handleOutput(ssize_t count, char *buffer)
                      (int)count);
     }
 
-    CReplStdioData *repl
-        = new CReplStdioData(requesterNid_, pid_, STDIN_DATA, count, buffer );
-    Replicator.addItem(repl);
+    if (NameServerEnabled)
+    {
+        PtpClient->ProcessStdIoData( requesterNid_
+                                   , pid_
+                                   , STDIN_DATA
+                                   , count
+                                   , buffer );
+    }
+    else
+    {
+        CReplStdioData *repl = new CReplStdioData( requesterNid_
+                                                 , pid_
+                                                 , STDIN_DATA
+                                                 , count
+                                                 , buffer );
+        Replicator.addItem(repl);
+    }
+
     if (sonar_verify_state(SONAR_ENABLED | SONAR_MONITOR_ENABLED))
        MonStats->StdinRemoteDataReplIncr();
 
@@ -860,29 +907,78 @@ CRedirectStdout::CRedirectStdout(int nid, int pid, const char *filename, int sou
     const char method_name[] = "CRedirectStdout::CRedirectStdout";
     TRACE_ENTRY;
 
+    int rc = 0;
+    int err = 0;
+
     // Add eyecatcher sequence as a debugging aid
     memcpy(&eyecatcher_, "REDE", 4);
 
-    fd_ = open(filename, O_CREAT | O_APPEND | O_WRONLY | O_NONBLOCK,
-               S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-    if( fd_ == -1 )
+    if (trace_settings & TRACE_REDIRECTION)
     {
-        char buf[MON_STRING_BUF_SIZE];
-        sprintf(buf, "[%s], open error for %s, %s.\n", method_name,
-                filename, strerror(errno));
-        mon_log_write(MON_REDIR_STDOUT_1, SQ_LOG_ERR, buf);
+        trace_printf( "%s@%d stdout, file=%s\n"
+                    , method_name, __LINE__
+                    , filename );
     }
 
-    else
-    {
-        // Retain file name.  Might be needed in case of error on file.
-        filename_ = filename;
-
-        Redirector.addToMap(fd_, this);
-        if (trace_settings & TRACE_REDIRECTION)
+    if (strlen(filename))
+    {   // stdout file/device is on this node
+        struct stat statbuf;
+        memset(&statbuf, 0, sizeof(statbuf));
+        rc = stat(filename, &statbuf);
+        if (rc == -1)
         {
-            trace_printf("%s@%d opened %s fd=%d.  Added to fdMap.\n",
-                         method_name, __LINE__, filename, fd_);
+            err = errno;
+        }
+
+        if (rc == 0 || err == ENOENT)
+        {
+            fd_ = open(filename, O_CREAT | O_APPEND | O_WRONLY | O_NONBLOCK,
+                       S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+            if( fd_ == -1 )
+            {
+                err = errno;
+                if ( err == EACCES &&
+                    (S_ISCHR(statbuf.st_mode) || S_ISFIFO(statbuf.st_mode)) )
+                { // Don't log error since it is a common occurrence
+                    if (trace_settings & TRACE_REDIRECTION)
+                    {
+                        trace_printf( "%s@%d stdout is character device or "
+                                      "named pipe, file=%s, errno=%d (%s)\n"
+                                    , method_name, __LINE__
+                                    , filename, err, strerror(err) );
+                    }
+                }
+                else
+                {
+                    char buf[MON_STRING_BUF_SIZE];
+                    sprintf( buf
+                           , "[%s], open error for: "
+                             "file=%s, errno=%d (%s)\n"
+                           , method_name, filename, err, strerror(err) );
+                    mon_log_write(MON_REDIR_STDOUT_1, SQ_LOG_ERR, buf);
+                }
+            }
+            else
+            {
+                // Retain file name.  Might be needed in case of error on file.
+                filename_ = filename;
+    
+                Redirector.addToMap(fd_, this);
+                if (trace_settings & TRACE_REDIRECTION)
+                {
+                    trace_printf("%s@%d opened %s fd=%d.  Added to fdMap.\n",
+                                 method_name, __LINE__, filename, fd_);
+                }
+            }
+        }
+        else
+        {
+            char buf[MON_STRING_BUF_SIZE];
+            sprintf( buf
+                   , "[%s], unable to obtain file info for stdout file"
+                     ", file=%s, errno=%d (%s)\n"
+                   , method_name, filename, err, strerror(err) );
+            mon_log_write(MON_REDIR_STDOUT_2, SQ_LOG_ERR, buf);
         }
     }
 
@@ -1133,10 +1229,24 @@ void CRedirectAncestorStdout::handleOutput(ssize_t count, char *buffer)
                      (int)count);
     }
 
-    CReplStdioData *repl
-        = new CReplStdioData(ancestor_nid_, ancestor_pid_, STDOUT_DATA, 
-                              count, buffer );
-    Replicator.addItem(repl);
+    if (NameServerEnabled)
+    {
+        PtpClient->ProcessStdIoData( ancestor_nid_
+                                   , ancestor_pid_
+                                   , STDOUT_DATA
+                                   , count
+                                   , buffer );
+    }
+    else
+    {
+        CReplStdioData *repl = new CReplStdioData( ancestor_nid_
+                                                 , ancestor_pid_
+                                                 , STDOUT_DATA
+                                                 , count
+                                                 , buffer );
+        Replicator.addItem(repl);
+    }
+
     if (sonar_verify_state(SONAR_ENABLED | SONAR_MONITOR_ENABLED))
        MonStats->StdioDataReplIncr();
 
@@ -1175,7 +1285,7 @@ void CRedirectStderr::handleHangup()
 
     CProcess *process = NULL;
 
-    if ( !MyNode->IsKillingNode() || MyNode->IsSoftNodeDown() )
+    if ( !MyNode->IsKillingNode() )
     {
         process = MyNode->GetProcess ( pid_ );
     }
@@ -1231,9 +1341,16 @@ void CRedirectStderr::handleHangup()
             process->SetAbended( true );
         }
         if (trace_settings & (TRACE_PROCESS | TRACE_REDIRECTION))
-            trace_printf("%s@%d Detected broken stderr pipe for child "
-                         "process, pid=%d; waiting for child death signal\n",
-                         method_name, __LINE__, pid_);
+            trace_printf( "%s@%d Detected broken stderr pipe for child "
+                          "process %s(%d,%d:%d), state=%s, IsAbended=%s; "
+                          "waiting for child death signal\n"
+                        , method_name, __LINE__
+                        , process->GetName()
+                        , process->GetNid()
+                        , process->GetPid()
+                        , process->GetVerifier()
+                        , StateString(process->GetState())
+                        , process->IsAbended()?"TRUE":"FALSE" );
         process->SetHangupTime ();
         MyNode->PidHangupSet ( pid_ );
     }
@@ -1483,17 +1600,20 @@ void CRedirector::stdinFd(int nid, int pid, int &pipeFd, char filename[],
 
     if (filename[0])
     {   // stdin source file/device is on this node
-
         struct stat statbuf;
         if (stat(filename, &statbuf) == -1)
         {
-            char buf[MON_STRING_BUF_SIZE];
-            sprintf(buf, "[%s], unable to obtain file info for stdin file"
-                    ", file=%s. Closing stdin pipe fd=%d\n",
-                    method_name, filename, pipeFd );
-            mon_log_write(MON_REDIR_STDIN_FD_1, SQ_LOG_ERR, buf);
-
-            close ( pipeFd );
+            int err = errno;
+            if (err != ENOENT)
+            {
+                char buf[MON_STRING_BUF_SIZE];
+                sprintf(buf, "[%s], unable to obtain file info for stdin file"
+                        ", file=%s, errno=%d (%s). Closing stdin pipe fd=%d\n",
+                        method_name, filename, err, strerror(err), pipeFd );
+                mon_log_write(MON_REDIR_STDIN_FD_1, SQ_LOG_ERR, buf);
+            }
+            delFromMap( pipeFd );
+            close( pipeFd );
             pipeFd = -1;
         }
         else
@@ -1596,10 +1716,23 @@ void CRedirector::stdinFd(int nid, int pid, int &pipeFd, char filename[],
         fdMap_.insert(std::make_pair(pipeFd, redirect));
         fdMapLock_.unlock();
 
-        CReplStdinReq *repl
-            = new CReplStdinReq(nid, pid, STDIN_REQ_DATA, ancestor_nid,
-                                ancestor_pid );
-        Replicator.addItem(repl);
+        if (NameServerEnabled)
+        {
+            PtpClient->ProcessStdInReq( nid
+                                      , pid
+                                      , STDIN_REQ_DATA
+                                      , ancestor_nid
+                                      , ancestor_pid );
+        }
+        else
+        {
+            CReplStdinReq *repl = new CReplStdinReq( nid
+                                                   , pid
+                                                   , STDIN_REQ_DATA
+                                                   , ancestor_nid
+                                                   , ancestor_pid );
+            Replicator.addItem(repl);
+        }
     }
 
     TRACE_EXIT;
@@ -1949,13 +2082,7 @@ void CRedirector::redirectThread()
                     // bugcatcher, temp call
                     redirect->validateObj();
                 }
-                else
-                {
-                    char buf[MON_STRING_BUF_SIZE];
-                    sprintf(buf, "[%s], fd=%d not found in map\n",
-                            method_name, fd);
-                    mon_log_write(MON_REDIRECT_TH_2, SQ_LOG_WARNING, buf);
-                }
+                // else fd was already deleted
 
                 if (events & (EPOLLIN | EPOLLPRI))
                 {
@@ -2034,17 +2161,7 @@ void CRedirector::redirectThread()
                                 delete redirect;
                         }
                     }
-                    else
-                    {   // Unexpected state
-                        char buf[MON_STRING_BUF_SIZE];
-                        sprintf(buf, "[%s], unexpected redirect object state "
-                                "at hangup, fd=%d, events=%d, redirect=%p, "
-                                "pid_=%d, fd_=%d\n",
-                                method_name, fd, events, redirect,
-                                (redirect == NULL ? 0 : redirect->pid()),
-                                (redirect == NULL ? 0 : redirect->fd()));
-                        mon_log_write(MON_REDIRECT_TH_4, SQ_LOG_ERR, buf);
-                    }
+                    // else process object was already deleted by child death processing
                 }
                 else if (events & EPOLLERR)
                 {
@@ -2124,3 +2241,4 @@ void CRedirector::start()
 
     TRACE_EXIT;
 }
+#endif

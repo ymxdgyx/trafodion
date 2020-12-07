@@ -170,11 +170,16 @@ static char* buildName(const char* dir, const char* fileName, const char* server
 
 SecPwd::SecPwd(const char *dir, const char* fileName,
         const char* activeFileName,
-        const char* serverName) throw (SecurityException)
+        const char* serverName,
+        int serverNameLength) throw (SecurityException)
 : m_sec(NULL), certFile(NULL), activeCertFile(NULL)
 {
     char* dir_from_env = NULL;
     char  certDir[MAX_SQL_IDENTIFIER_LEN + 1];
+    char* serverNameGBKToUtf8 = NULL;
+    LCID lcid = GetSystemDefaultLCID();
+    int  translen = 0;
+    char transError[128] = { 0 };
 
     if (serverName == NULL)
         throw SecurityException (INPUT_PARAMETER_IS_NULL, " - serverName.");
@@ -217,8 +222,27 @@ SecPwd::SecPwd(const char *dir, const char* fileName,
     if(stat(certDir,&st) != 0)
         throw SecurityException(DIR_NOTFOUND, (char *)certDir);
 
-    certFile = buildName(certDir, fileName, serverName, CER);
-    activeCertFile = buildName(certDir, activeFileName, serverName, ACTIVE_CER);
+    if (lcid == 0x804) // if local charset is gbk
+    {
+        serverNameGBKToUtf8 = (char *)malloc(MAX_SQL_IDENTIFIER_LEN + 1);
+        if (TranslateUTF8(TRUE, serverName, serverNameLength,
+            serverNameGBKToUtf8, MAX_SQL_IDENTIFIER_LEN, &translen, transError) != SQL_SUCCESS)
+        {
+            free(serverNameGBKToUtf8);
+            serverNameGBKToUtf8 = NULL;
+            throw SecurityException(INPUT_PARAMETER_IS_NULL, " - serverName.");
+        }
+        certFile = buildName(certDir, fileName, serverNameGBKToUtf8, CER);
+        activeCertFile = buildName(certDir, activeFileName, serverNameGBKToUtf8, ACTIVE_CER);
+
+        free(serverNameGBKToUtf8);
+        serverNameGBKToUtf8 = NULL;
+    }
+    else
+    {
+        certFile = buildName(certDir, fileName, serverName, CER);
+        activeCertFile = buildName(certDir, activeFileName, serverName, ACTIVE_CER);
+    }
 
     // If activeCertFile does not exist and certFile exist, create activeCertFile
     // by from copying certFile to activeCertFile

@@ -65,6 +65,11 @@ class BigNum : public ComplexType {
   ULong              tempSpacePtr_;         // 24-31 //Put on 8-byte boundary
 
 public:
+  // some internal computation use bignum as temp storage.
+  // Use 38 digit precision and 16 bytes length for them.
+  enum {BIGNUM_TEMP_LEN = 16 };
+  enum {BIGNUM_TEMP_PRECISION = 38 };
+
   BigNum(Lng32 length, Lng32 precision, short scale, short unSigned);
 
   BigNum();
@@ -102,6 +107,12 @@ public:
 		  char * op_data[],
 		  NAMemory *heap,
 		  ComDiagsArea** diagsArea);
+
+  short round (Attributes * left,
+               Attributes * right,
+               char * op_data[],
+               NAMemory *heap,
+               ComDiagsArea** diagsArea);
 
   // if desc <> 0, then this is a descending key.
   void encode(const char * inBuf, char * outBuf, short desc = 0);
@@ -181,10 +192,18 @@ short EXP_FIXED_BIGN_OV_DIV(Attributes * op1,
                         char * op_data[]);
 
 Int64 EXP_FIXED_BIGN_OV_MOD(Attributes * op1,
-                        Attributes * op2,
-                        char * op_data[],
-                        short * ov);
+                            Attributes * op2,
+                            char * op_data[],
+                            short * ov,
+                            Int64 * quotient = NULL);
 
+short EXP_FIXED_BIGN_OV_ADD(Attributes * op1,
+                        Attributes * op2,
+                        char * op_data[]);
+
+short EXP_FIXED_BIGN_OV_SUB(Attributes * op1,
+                        Attributes * op2,
+                        char * op_data[]);
 
  
 

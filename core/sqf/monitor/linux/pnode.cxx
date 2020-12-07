@@ -32,6 +32,8 @@
 #include <sys/time.h>
 #include <string.h>
 #include <iostream>
+#include <sys/types.h>
+#include <unistd.h>
 
 using namespace std;
 
@@ -46,10 +48,14 @@ using namespace std;
 #include "lnode.h"
 #include "pnode.h"
 #include "mlio.h"
-
+#include "nameserver.h"
 #include "replicate.h"
 #include "reqqueue.h"
 #include "healthcheck.h"
+#ifndef NAMESERVER_PROCESS
+#include "zclient.h"
+#include "ptpclient.h"
+#endif
 
 extern CReqQueue ReqQueue;
 extern char MyPath[MAX_PROCESS_PATH];
@@ -61,21 +67,35 @@ extern bool Emulate_Down;
 extern CConfigContainer *Config;
 extern CMonitor *Monitor;
 extern CNodeContainer *Nodes;
+#ifndef NAMESERVER_PROCESS
 extern CDeviceContainer *Devices;
+#endif
 extern CNode *MyNode;
 extern CMonStats *MonStats;
+#ifndef NAMESERVER_PROCESS
 extern CRedirector Redirector;
+#endif
 extern CReplicate Replicator;
 extern CHealthCheck HealthCheck;
 extern CMonTrace *MonTrace;
 extern bool IsAgentMode;
 extern bool IAmIntegrating;
-extern char MasterMonitorName[MAX_PROCESS_PATH];
 extern char Node_name[MPI_MAX_PROCESSOR_NAME];
 extern CClusterConfig *ClusterConfig;
 
 const char *StateString( STATE state);
+#ifndef NAMESERVER_PROCESS
+extern const char *ProcessTypeString( PROCESSTYPE type );
 const char *SyncStateString( SyncState state);
+extern CPtpClient *PtpClient;
+extern CNameServer *NameServer;
+extern CProcess *NameServerProcess;
+extern bool NameServerEnabled;
+extern bool ZClientEnabled;
+extern bool IsMaster;
+extern CZClient *ZClient;
+#endif
+extern CNameServerConfigContainer *NameServerConfig;
 
 // The following defines are necessary for the new watchdog timer facility.  They should really be
 // ultimately placed in watchdog.h in my opinion, especially so people know not to re-use values 16,17
@@ -97,11 +117,6 @@ const char *SyncStateString( SyncState state);
 #define WDIOC_SQ_SETTIMEOUT        _IOWR(WATCHDOG_IOCTL_BASE, 6, int)
 #define WDIOC_SQ_GETTIMEOUT        _IOR(WATCHDOG_IOCTL_BASE, 7, int)
 
-
-// The following defines specify the default values for the HA
-// timers if the timer related environment variables are not defined.
-// Defaults to 5 second Watchdog process timer expiration
-#define WDT_KeepAliveTimerDefault 5
 
 // Default interval used by GetSchedulingData (in milliseconds)
 unsigned long int CNode::minSchedDataInterval_ = 500;
@@ -125,7 +140,11 @@ const char * CNode::memInfoString_[] = {
 size_t CNode::memInfoStringLen_[memFinalItem];
 
 
-CNode::CNode( char *name, int pnid, int rank )
+CNode::CNode( char *name
+            , char *domain
+            , char *fqdn
+            , int pnid
+            , int rank )
       :CLNodeContainer(this)
       ,CProcessContainer(true)
       ,pnid_(pnid)
@@ -137,6 +156,10 @@ CNode::CNode( char *name, int pnid, int rank )
       ,killingNode_(false)
       ,dtmAborted_(false)
       ,smsAborted_(false)
+      ,pendingNodeDown_(false)
+      ,primitiveDtmUp_(false)
+      ,primitivePsdUp_(false)
+      ,primitiveWdgUp_(false)
       ,lastLNode_(NULL)
       ,lastSdLevel_(ShutdownLevel_Undefined)
       ,rankFailure_(false)
@@ -149,13 +172,18 @@ CNode::CNode( char *name, int pnid, int rank )
       ,next_(NULL)
       ,prev_(NULL)
       ,rank_(rank)
-      ,tmSyncNid_(-1)
-      ,tmSyncState_(SyncState_Null)
       ,shutdownLevel_(ShutdownLevel_Undefined)
-      ,wdtKeepAliveTimerValue_(WDT_KeepAliveTimerDefault)
+      ,shutdownNameServer_(false)
+      ,wdtKeepAliveTimerValue_(WDT_KEEPALIVETIMERDEFAULT)
       ,zid_(pnid)
+      ,commPort_("")
       ,commSocketPort_(-1)
+      ,syncPort_("")
       ,syncSocketPort_(-1)
+#ifdef NAMESERVER_PROCESS
+      ,monConnCount_(0)
+#endif
+      ,uniqStrId_(-1)
       ,procStatFile_(NULL)
       ,procMeminfoFile_(-1)
 {
@@ -180,6 +208,8 @@ CNode::CNode( char *name, int pnid, int rank )
     prevSchedData_.tv_nsec = 0;
 
     STRCPY(name_, name);
+    STRCPY(domain_, domain);
+    STRCPY(fqdn_, fqdn);
     
     hostname_ = name;
     size_t pos = hostname_.find_first_of( ".:" );
@@ -236,16 +266,18 @@ CNode::CNode( char *name, int pnid, int rank )
 
     gettimeofday(&todStart_, NULL);
 
+#ifndef NAMESERVER_PROCESS
     quiesceSendPids_ = new SQ_LocalIOToClient::bcastPids_t;
     quiesceExitPids_ = new SQ_LocalIOToClient::bcastPids_t;
+#endif
     internalState_ = State_Default; 
-
-    uniqStrId_ = Config->getMaxUniqueId ( pnid_ ) + 1;
 
     TRACE_EXIT;
 }
 
 CNode::CNode( char *name
+            , char *domain
+            , char *fqdn
             , int   pnid
             , int   rank
             , int   sparePNidCount
@@ -262,6 +294,7 @@ CNode::CNode( char *name
       ,killingNode_(false)
       ,dtmAborted_(false)
       ,smsAborted_(false)
+      ,pendingNodeDown_(false)
       ,lastLNode_(NULL)
       ,lastSdLevel_(ShutdownLevel_Undefined)
       ,excludedCoreMask_(excludedCoreMask)
@@ -275,11 +308,18 @@ CNode::CNode( char *name
       ,next_(NULL)
       ,prev_(NULL)
       ,rank_(rank)
-      ,tmSyncNid_(-1)
-      ,tmSyncState_(SyncState_Suspended)
       ,shutdownLevel_(ShutdownLevel_Undefined)
-      ,wdtKeepAliveTimerValue_(WDT_KeepAliveTimerDefault)
+      ,shutdownNameServer_(false)
+      ,wdtKeepAliveTimerValue_(WDT_KEEPALIVETIMERDEFAULT)
       ,zid_(-1)
+      ,commPort_("")
+      ,commSocketPort_(-1)
+      ,syncPort_("")
+      ,syncSocketPort_(-1)
+#ifdef NAMESERVER_PROCESS
+      ,monConnCount_(-1)
+#endif
+      ,uniqStrId_(-1)
       ,procStatFile_(NULL)
       ,procMeminfoFile_(-1)
 {
@@ -290,6 +330,8 @@ CNode::CNode( char *name
     memcpy(&eyecatcher_, "PNOD", 4);
 
     STRCPY(name_, name);
+    STRCPY(domain_, domain);
+    STRCPY(fqdn_, fqdn);
     
     hostname_ = name;
     size_t pos = hostname_.find_first_of( ".:" );
@@ -351,11 +393,11 @@ CNode::CNode( char *name
     
     gettimeofday(&todStart_, NULL);
 
+#ifndef NAMESERVER_PROCESS
     quiesceSendPids_ = new SQ_LocalIOToClient::bcastPids_t;
     quiesceExitPids_ = new SQ_LocalIOToClient::bcastPids_t;
+#endif
     internalState_ = State_Default; 
-
-    uniqStrId_ = Config->getMaxUniqueId ( pnid_ ) + 1;
 
     TRACE_EXIT;
 }
@@ -379,6 +421,7 @@ CNode::~CNode( void )
     if ( procMeminfoFile_ != -1 )
         close( procMeminfoFile_ );
 
+#ifndef NAMESERVER_PROCESS
     if (quiesceSendPids_)
     {
         delete quiesceSendPids_;
@@ -388,10 +431,12 @@ CNode::~CNode( void )
     {
         delete quiesceExitPids_;
     }
+#endif
     
     TRACE_EXIT;
 }
 
+#ifndef NAMESERVER_PROCESS
 void CNode::addToQuiesceSendPids( int pid, Verifier_t verifier )
 {
     SQ_LocalIOToClient::pidVerifier_t pv;
@@ -415,6 +460,7 @@ void CNode::delFromQuiesceExitPids( int pid, Verifier_t verifier )
     pv.pv.verifier = verifier;
     quiesceExitPids_->erase( pv.pnv );
 }
+#endif
 
 int CNode::AssignNid(void)
 {
@@ -493,13 +539,15 @@ void CNode::CheckActivationPhase( void )
         }
         tmReady = (tmCount == GetLNodesCount()) ? true : false;
     }
-    
+
     if ( tmReady )
     {
         if (trace_settings & (TRACE_INIT | TRACE_SYNC | TRACE_TMSYNC))
-            trace_printf("%s@%d - Activation Phase_Ready on node %s, pnid=%d\n", method_name, __LINE__, GetName(), GetPNid());
+        {
+            trace_printf("%s@%d - Setting Phase_Ready on node %s, pnid=%d\n", method_name, __LINE__, GetName(), GetPNid());
+        }
         phase_ = Phase_Ready;
-        tmSyncState_ = SyncState_Null;
+        HealthCheck.triggerTimeToLogHealth();
     }
 
     TRACE_EXIT;
@@ -507,10 +555,11 @@ void CNode::CheckActivationPhase( void )
 
 void CNode::CheckShutdownProcessing( void )
 {
-    struct message_def *msg;
-
     const char method_name[] = "CNode::CheckShutdownProcessing";
     TRACE_ENTRY;
+
+#ifndef NAMESERVER_PROCESS
+    struct message_def *msg;
     if ( shutdownLevel_ != lastSdLevel_ )
     {
         lastSdLevel_ = shutdownLevel_;
@@ -529,9 +578,12 @@ void CNode::CheckShutdownProcessing( void )
         Bcast (msg);
         delete msg;
     }
+#endif
+
     TRACE_EXIT;
 }
 
+#ifndef NAMESERVER_PROCESS
 // In virtual node configuration, empty the quiescing pids so that new ones could be added.
 void CNode::EmptyQuiescingPids()
 {
@@ -550,7 +602,9 @@ void CNode::EmptyQuiescingPids()
 
     TRACE_EXIT;
 }
+#endif
 
+#ifndef NAMESERVER_PROCESS
 // Send quiescing notices to pids in the QiesceSendPids list. 
 void CNode::SendQuiescingNotices( void )
 {
@@ -581,6 +635,7 @@ void CNode::SendQuiescingNotices( void )
 
     TRACE_EXIT;
 }
+#endif
 
 void CNode::SetState( STATE state )
 {
@@ -976,22 +1031,67 @@ bool CNode::GetSchedulingData( void )
 }
 
 
-strId_t CNode::GetStringId(char * candidate)
+strId_t CNode::GetStringId( char *candidate, CLNode *targetLNode, bool clone )
 {
     const char method_name[] = "CNode::GetStringId";
-    strId_t id;
-
     TRACE_ENTRY;
 
-    if ( ! Config->findUniqueString ( pnid_, candidate, id ) )
-    {   // The string is not in the configuration database, add it
-        id.id  = uniqStrId_++;
-        id.nid = pnid_;
+    strId_t existStrId;
+    strId_t strId;
+    string  existUString;
 
-        Config->addUniqueString(id.nid, id.id, candidate);
+    if ( ! Config->getUniqueStringId( pnid_, candidate, strId ) )
+    {   // The candidate string is not in the configuration database
+        if (uniqStrId_ == -1)
+        {   // Get the last unique string id assigned
+            uniqStrId_ = Config->getMaxUniqueId( pnid_ );
+        }
+        existStrId.nid = pnid_;
+        existStrId.id  = ++uniqStrId_;
+        while (Config->getUniqueString(existStrId.nid, existStrId.id, existUString))
+        {
+            existStrId.id  = ++uniqStrId_;
+        }
 
-        CReplUniqStr *repl = new CReplUniqStr ( id.nid, id.id, candidate );
-        Replicator.addItem(repl);
+        strId.nid = pnid_;
+        strId.id  = uniqStrId_;
+        Config->addUniqueString(strId.nid, strId.id, candidate);
+
+#ifndef NAMESERVER_PROCESS
+        if (NameServerEnabled)
+        {
+            if (targetLNode != NULL && !clone &&
+                !MyNode->IsMyNode(targetLNode->GetNid()))
+            {
+                // Forward the unique string to the target node
+                int rc = PtpClient->ProcessAddUniqStr( strId.nid
+                                                     , strId.id
+                                                     , candidate
+                                                     , targetLNode->GetNid()
+                                                     , targetLNode->GetNode()->GetName() );
+                if (rc)
+                {
+                    char la_buf[MON_STRING_BUF_SIZE];
+                    snprintf( la_buf, sizeof(la_buf)
+                            , "[%s] - Can't send unique string "
+                              "to target node %s, nid=%d\n"
+                            , method_name
+                            , targetLNode->GetNode()->GetName()
+                            , targetLNode->GetNid() );
+                    mon_log_write(MON_NODE_GETSTRINGID_1, SQ_LOG_ERR, la_buf);
+                }
+            }
+        }
+        else
+#endif
+        {
+#ifdef NAMESERVER_PROCESS
+            clone = clone;  // Make compiler happy!
+            targetLNode = targetLNode;  // Make compiler happy!
+#endif
+            CReplUniqStr *repl = new CReplUniqStr ( strId.nid, strId.id, candidate );
+            Replicator.addItem(repl);
+        }
     }
     // temp trace
     else
@@ -999,22 +1099,114 @@ strId_t CNode::GetStringId(char * candidate)
         if (trace_settings & TRACE_PROCESS)
         {
             trace_printf("%s@%d - unique string id=[%d,%d] (%s)\n",
-                         method_name, __LINE__, id.nid, id.id, candidate );
+                         method_name, __LINE__, strId.nid, strId.id, candidate );
         }
+
+#ifndef NAMESERVER_PROCESS
+        if (NameServerEnabled)
+        {
+            if (targetLNode != NULL && !clone &&
+                !MyNode->IsMyNode(targetLNode->GetNid()))
+            {
+                // Forward the unique string to the target node
+                int rc = PtpClient->ProcessAddUniqStr( strId.nid
+                                                     , strId.id
+                                                     , candidate
+                                                     , targetLNode->GetNid()
+                                                     , targetLNode->GetNode()->GetName());
+                if (rc)
+                {
+                    char la_buf[MON_STRING_BUF_SIZE];
+                    snprintf( la_buf, sizeof(la_buf)
+                            , "[%s] - Can't send unique string "
+                              "to target node %s, nid=%d\n"
+                            , method_name
+                            , targetLNode->GetNode()->GetName()
+                            , targetLNode->GetNid() );
+                    mon_log_write(MON_NODE_GETSTRINGID_2, SQ_LOG_ERR, la_buf);
+                }
+            }
+        }
+#endif
     }
 
     TRACE_EXIT;
 
-    return id;
+    return strId;
 }
 
-CNode *CNode::Link( CNode * entry )
+CNode *CNode::LinkAfter( CNode * &tail, CNode * entry )
 {
-    const char method_name[] = "CNode::Link";
+    const char method_name[] = "CNode::LinkAfter";
     TRACE_ENTRY;
-    next_ = entry;
-    entry->prev_ = this;
 
+    entry->prev_ = this;
+    if (next_ == NULL)
+    {
+        entry->next_ = NULL;
+        tail = entry;
+    }
+    else
+    {
+        entry->next_ = next_;
+        next_->prev_ = entry;
+    }
+    next_ = entry;
+
+    if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
+    {
+        trace_printf( "%s@%d - Linked physical node object "
+                      "tail=%d\n"
+                      "\t\tthis: prev=%d, this=%d, next=%d\n"
+                      "\t\tentry: prev=%d, entry=%d, next=%d\n"
+                    , method_name, __LINE__
+                    , tail->GetPNid()
+                    , prev_?prev_->GetPNid():-1
+                    , GetPNid()
+                    , next_?next_->GetPNid():-1
+                    , entry->prev_?entry->prev_->GetPNid():-1
+                    , entry->GetPNid()
+                    , entry->next_?entry->next_->GetPNid():-1 );
+    }
+    
+    TRACE_EXIT;
+    return entry;
+}
+
+CNode *CNode::LinkBefore( CNode * &head, CNode * entry )
+{
+    const char method_name[] = "CNode::LinkBefore";
+    TRACE_ENTRY;
+
+    entry->next_ = this;
+    if (prev_ == NULL)
+    {
+        entry->prev_ = NULL;
+        head = entry;
+    }
+    else
+    {
+        entry->prev_ = prev_;
+        prev_->next_ = entry;
+    }
+    prev_ = entry;
+
+    if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
+    {
+        trace_printf( "%s@%d - Linked physical node object "
+                      "head=%d\n"
+                      "\t\tthis: prev=%d, this=%d, next=%d\n"
+                      "\t\tentry: prev=%d, entry=%d, next=%d\n"
+                    , method_name, __LINE__
+                    , head->GetPNid()
+                    , prev_?prev_->GetPNid():-1
+                    , GetPNid()
+                    , next_?next_->GetPNid():-1
+                    , entry->prev_?entry->prev_->GetPNid():-1
+                    , entry->GetPNid()
+                    , entry->next_?entry->next_->GetPNid():-1 );
+    }
+    
     TRACE_EXIT;
     return entry;
 }
@@ -1068,6 +1260,7 @@ void CNode::MoveLNodes( CNode *spareNode )
     return;
 }
 
+#ifndef NAMESERVER_PROCESS
 void CNode::SetAffinity( int nid, pid_t pid, PROCESSTYPE type )
 {
     CLNode  *lnode = Nodes->GetLNode( nid );
@@ -1106,6 +1299,252 @@ void CNode::SetAffinity( CProcess *process )
     TRACE_EXIT;
 }
 
+void CNode::GetPersistProcessAttributes( CPersistConfig *persistConfig
+                                       , int             nid
+                                       , PROCESSTYPE    &processType
+                                       , char           *processName
+                                       , char           *programName
+                                       , int            &programArgc
+                                       , char           *programArgs
+                                       , char           *outfile
+                                       , char           *persistRetries
+                                       , char           *persistZones )
+{
+    const char method_name[] = "CNode::GetPersistProcessAttributes";
+    char zoneStr[MAX_PERSIST_VALUE_STR];
+
+    processType = persistConfig->GetProcessType();
+
+    switch (persistConfig->GetZoneZidFormat())
+    {
+    case Zid_ALL:
+        sprintf( zoneStr, "%d (ALL)", -1 );
+        strcat( persistZones, zoneStr );
+        break;
+    case Zid_RELATIVE:
+    default:
+        sprintf( zoneStr, "%d", nid );
+        strcpy( persistZones, zoneStr );
+        break;
+    }
+
+    if ( nid == -1 )
+    {
+        sprintf( processName, "%s"
+               , persistConfig->GetProcessNamePrefix() );
+        sprintf( outfile, "%s"
+               , persistConfig->GetStdoutPrefix() );
+    }
+    else
+    {
+        sprintf( processName, "%s%d"
+               , persistConfig->GetProcessNamePrefix()
+               , nid );
+        sprintf( outfile, "%s%d"
+               , persistConfig->GetStdoutPrefix()
+               , nid );
+    }
+
+    sprintf( programName, "%s", persistConfig->GetProgramName() );
+
+    programArgc = persistConfig->GetProgramArgc();
+    if (programArgc)
+    {
+        sprintf( programArgs, "%s"
+               , persistConfig->GetProgramArgs() );
+    }
+
+    sprintf( persistRetries, "%d,%d"
+           , persistConfig->GetPersistRetries()
+           , persistConfig->GetPersistWindow() );
+
+    if (trace_settings & (TRACE_INIT | TRACE_RECOVERY | TRACE_PROCESS | TRACE_PROCESS_DETAIL))
+        trace_printf( "%s@%d Persist process Nid=%d, "
+                      "processName=%s, type=%s, stdout=%s, "
+                      "persistRetries=%s, persistZones=%s\n"
+                    , method_name, __LINE__
+                    , nid, processName
+                    , ProcessTypeString(persistConfig->GetProcessType())
+                    , outfile
+                    , persistRetries
+                    , persistZones );
+}
+
+void CNode::StartDtmProcess( void )
+{
+    const char method_name[] = "CNode::StartDtmProcess";
+    TRACE_ENTRY;
+
+    bool debug = false;
+    bool nowait = false;
+    char infile[MAX_PROCESS_PATH];
+    char *ldpath = NULL;
+    char path[MAX_SEARCH_PATH];
+    char processName[MAX_PROCESS_NAME];
+    char programArgs[MAX_VALUE_SIZE_INT];
+    char programName[MAX_PROCESS_NAME];
+    char outfile[MAX_PROCESS_PATH];
+    char persistRetries[MAX_PERSIST_VALUE_STR];
+    char persistZones[MAX_VALUE_SIZE_INT];
+    char stdout[MAX_PROCESS_PATH];
+    int nid = MyNode->AssignNid();
+    int programArgc = 0;
+    PROCESSTYPE processType = ProcessType_DTM;
+    CProcess* dtmProcess;
+    CClusterConfig* clusterConfig = Nodes->GetClusterConfig();
+    CPersistConfig* persistConfig = NULL;
+    
+    assert(clusterConfig != NULL);
+
+    persistConfig = clusterConfig->GetPersistConfig( "DTM" );
+    if (persistConfig == NULL)
+    {
+        char buf[MON_STRING_BUF_SIZE];
+        snprintf( buf, sizeof(buf)
+                , "[%s], Persistent process configuration for DTM is missing!\n"
+                , method_name );
+        mon_log_write(MON_NODE_STARTDTMPROCESS_1, SQ_LOG_ERR, buf);
+        abort();
+    }
+
+    GetPersistProcessAttributes( persistConfig
+                               , nid
+                               , processType
+                               , processName
+                               , programName
+                               , programArgc
+                               , programArgs
+                               , outfile
+                               , persistRetries
+                               , persistZones );
+
+    const char *logpath = getenv("TRAF_LOG");
+    snprintf( stdout, sizeof(stdout)
+            , "%s/%s"
+            , logpath, outfile );
+
+    if (trace_settings & (TRACE_PROCESS | TRACE_PROCESS_DETAIL))
+    {
+        trace_printf( "%s@%d - Process %s, logpath=%s, outfile=%s, stdout=%s\n"
+                    , method_name, __LINE__
+                    , processName, logpath, outfile, stdout);
+    }
+
+    strcpy(path,getenv("PATH"));
+    strcat(path,":");
+    strcat(path,MyPath);
+    ldpath = getenv("LD_LIBRARY_PATH");
+    strId_t pathStrId = MyNode->GetStringId ( path );
+    strId_t ldpathStrId = MyNode->GetStringId ( ldpath );
+    strId_t programStrId = MyNode->GetStringId ( programName );
+
+    int result;
+    dtmProcess  = CreateProcess( NULL               // parent
+                               , nid
+                               , ProcessType_DTM
+                               , 0                  // debug
+                               , 0                  // priority
+                               , 0                  // backup
+                               , true               // unhooked
+                               , processName
+                               , pathStrId 
+                               , ldpathStrId 
+                               , programStrId 
+                               , (char *) ""        // infile
+                               , stdout             // outfile
+                               , 0                  // tag
+                               , result );
+    if ( dtmProcess )
+    {
+        if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
+           trace_printf( "%s@%d - DTM process created (%s)\n"
+                       , method_name, __LINE__, processName );
+    }
+    else
+    {
+        char buf[MON_STRING_BUF_SIZE];
+        sprintf(buf
+               , "[%s], DTM process creation failed! (%s)\n"
+               , method_name, processName );
+        mon_log_write( MON_NODE_STARTDTMPROCESS_2, SQ_LOG_ERR, buf );
+    }
+
+    TRACE_EXIT;
+}
+
+void CNode::StartNameServerProcess( void )
+{
+    const char method_name[] = "CNode::StartNameServerProcess";
+    TRACE_ENTRY;
+
+    if ( !NameServer->IsNameServerConfigured( MyPNID ) )
+    {
+        if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
+        {
+            trace_printf( "%s@%d" " - NameServer is not configured in my node\n"
+                        , method_name, __LINE__);
+        }
+        return;
+    }
+
+    char path[MAX_SEARCH_PATH];
+    char *ldpath = NULL; // = getenv("LD_LIBRARY_PATH");
+    char filename[MAX_PROCESS_PATH];
+    char name[MAX_PROCESS_NAME];
+    char stdout[MAX_PROCESS_PATH];
+    
+    const char *logpath = getenv("TRAF_LOG");
+    snprintf( name, sizeof(name), "$TNS%d", MyNode->GetZone() );
+    snprintf( stdout, sizeof(stdout), "%s/stdout_TNS%d", logpath, MyNode->GetZone() );
+
+    if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
+    {
+        trace_printf("%s@%d" " - Creating NameServer Process\n", method_name, __LINE__);
+    }
+
+    strcpy(path,getenv("PATH"));
+    strcat(path,":");
+    strcat(path,MyPath);
+    strcpy(filename,"trafns");
+    ldpath = getenv("LD_LIBRARY_PATH");
+    strId_t pathStrId = MyNode->GetStringId ( path );
+    strId_t ldpathStrId = MyNode->GetStringId ( ldpath );
+    strId_t programStrId = MyNode->GetStringId ( filename );
+
+    int result;
+    NameServerProcess  = CreateProcess( NULL, //parent
+                                        MyNode->AssignNid(),
+                                        ProcessType_NameServer,
+                                        0,  //debug
+                                        0,  //priority
+                                        0,  //backup
+                                        true, //unhooked
+                                        name,
+                                        pathStrId,
+                                        ldpathStrId,
+                                        programStrId,
+                                        (char *) "", //infile,
+                                        stdout, //outfile,
+                                        0, //tag
+                                        result
+                                        );
+    if ( NameServerProcess )
+    {
+        if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
+        {
+            trace_printf("%s@%d" " - NameServer Process created\n", method_name, __LINE__);
+        }
+    }
+    else
+    {
+        char la_buf[MON_STRING_BUF_SIZE];
+        sprintf(la_buf, "[%s], NameServer Process creation failed.\n", method_name);
+        mon_log_write( MON_NODE_STARTNAMESERVER_1, SQ_LOG_ERR, la_buf );
+    }
+
+    TRACE_EXIT;
+}
+
 void CNode::StartWatchdogProcess( void )
 {
     const char method_name[] = "CNode::StartWatchdogProcess";
@@ -1118,8 +1557,9 @@ void CNode::StartWatchdogProcess( void )
     char stdout[MAX_PROCESS_PATH];
     CProcess * watchdogProcess;
     
+    const char *logpath = getenv("TRAF_LOG");
     snprintf( name, sizeof(name), "$WDG%d", MyNode->GetZone() );
-    snprintf( stdout, sizeof(stdout), "stdout_WDG%d", MyNode->GetZone() );
+    snprintf( stdout, sizeof(stdout), "%s/stdout_WDG%d", logpath, MyNode->GetZone() );
 
     // The following variables are used to retrieve the proper startup and keepalive environment variable
     // values, and to use as arguments for the lower level ioctl calls that interface with the watchdog 
@@ -1132,7 +1572,7 @@ void CNode::StartWatchdogProcess( void )
 
     if (!(WDT_KeepAliveTimerValueC = getenv("SQ_WDT_KEEPALIVETIMERVALUE")))
     {
-        wdtKeepAliveTimerValue_ = WDT_KeepAliveTimerDefault;
+        wdtKeepAliveTimerValue_ = WDT_KEEPALIVETIMERDEFAULT;
     }
     else
     {
@@ -1169,9 +1609,10 @@ void CNode::StartWatchdogProcess( void )
                                       programStrId,
                                       (char *) "", //infile,
                                       stdout, //outfile,
+                                      0, //tag
                                       result
                                       );
-    if ( watchdogProcess  )
+    if ( watchdogProcess )
     {
         if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
            trace_printf("%s@%d" " - Watchdog Process created\n", method_name, __LINE__);
@@ -1200,8 +1641,9 @@ void CNode::StartPStartDProcess( void )
     char stdout[MAX_PROCESS_PATH];
     CProcess * pstartdProcess;
     
+    const char *logpath = getenv("TRAF_LOG");
     snprintf( name, sizeof(name), "$PSD%d", MyNode->GetZone() );
-    snprintf( stdout, sizeof(stdout), "stdout_PSD%d", MyNode->GetZone() );
+    snprintf( stdout, sizeof(stdout), "%s/stdout_PSD%d", logpath, MyNode->GetZone() );
 
     strcpy(path,getenv("PATH"));
     strcat(path,":");
@@ -1226,9 +1668,10 @@ void CNode::StartPStartDProcess( void )
                                       programStrId,
                                       (char *) "", //infile,
                                       stdout, //outfile,
+                                      0, //tag
                                       result
                                       );
-    if ( pstartdProcess  )
+    if ( pstartdProcess )
     {
         if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
            trace_printf("%s@%d - pstartd process created\n",
@@ -1269,7 +1712,7 @@ void CNode::StartPStartDPersistent( void )
         for ( ; lnode; lnode = lnode->GetNextP() )
         {
             CProcess *process = lnode->GetProcessLByType( ProcessType_DTM );
-            if ( process  ) tmCount++;
+            if ( process ) tmCount++;
         }
     }
 
@@ -1325,7 +1768,7 @@ void CNode::StartPStartDPersistentDTM( int nid )
         for ( ; lnode; lnode = lnode->GetNextP() )
         {
             process = lnode->GetProcessLByType( ProcessType_DTM );
-            if ( process  ) tmCount++;
+            if ( process ) tmCount++;
         }
     }
 
@@ -1376,8 +1819,9 @@ void CNode::StartSMServiceProcess( void )
     if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
        trace_printf("%s@%d" " - Creating SMService Process\n", method_name, __LINE__);
 
+    const char *logpath = getenv("TRAF_LOG");
     snprintf( name, sizeof(name), "$SMS%03d", MyNode->GetZone() );
-    snprintf( stdout, sizeof(stdout), "stdout_SMS%03d", MyNode->GetZone() );
+    snprintf( stdout, sizeof(stdout), "%s/stdout_SMS%03d", logpath, MyNode->GetZone() );
 
     strcpy(path,getenv("PATH"));
     strcat(path,":");
@@ -1402,9 +1846,10 @@ void CNode::StartSMServiceProcess( void )
                                  programStrId,
                                  (char *) "", //infile,
                                  stdout, //outfile,
+                                 0, //tag
                                  result
                                  );
-    if ( smsProcess  )
+    if ( smsProcess )
     {
         if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
            trace_printf("%s@%d - smservice process (%s) created\n",
@@ -1420,6 +1865,7 @@ void CNode::StartSMServiceProcess( void )
 
     TRACE_EXIT;
 }
+#endif
 
 CNodeContainer::CNodeContainer( void )
                :CLNodeContainer(NULL)
@@ -1427,6 +1873,7 @@ CNodeContainer::CNodeContainer( void )
                ,pnodeCount_(0)
                ,indexToPnid_(NULL)
                ,clusterConfig_(NULL)
+               ,nameServerConfig_(NULL)
                ,head_(NULL)
                ,tail_(NULL)
                ,syncBufferFreeSpace_(MAX_SYNC_SIZE)
@@ -1488,6 +1935,11 @@ CNodeContainer::~CNodeContainer( void )
     if (clusterConfig_)
     {
         delete clusterConfig_;
+        clusterConfig_ = NULL;
+    }
+    if (nameServerConfig_)
+    {
+        delete nameServerConfig_;
     }
     if (Node)
     {
@@ -1504,6 +1956,32 @@ CNodeContainer::~CNodeContainer( void )
     TRACE_EXIT;
 }
 
+
+int CNodeContainer::GetPNodesUpCount( int &readyCount )
+{
+    const char method_name[] = "CNodeContainer::GetPNodesUpCount";
+    TRACE_ENTRY;
+
+    int upCount = 0;
+    readyCount = 0;
+
+    CNode *node = head_;
+    while (node)
+    {
+        if ( node->GetState() == State_Up )
+        { 
+            upCount++;
+            if (node->GetPhase() == Phase_Ready)
+            {
+                readyCount++;
+            }
+        }
+        node = node->GetNext();
+    }
+
+    TRACE_EXIT;
+    return( upCount );
+}
 
 int CNodeContainer::GetPNid( char *nodeName )
 {
@@ -1540,6 +2018,69 @@ void CNodeContainer::AddedNode( CNode *node )
     TRACE_EXIT;
 }
 
+#ifndef NAMESERVER_PROCESS
+CProcess *CNodeContainer::AddCloneProcess( ProcessInfoNs_reply_def *processInfo )
+{
+    const char method_name[] = "CNodeContainer::AddNode";
+    TRACE_ENTRY;
+
+    CLNode   *lnode = Nodes->GetLNode(processInfo->nid);
+    CNode    *node = lnode->GetNode();
+
+    strId_t pathStrId = MyNode->GetStringId ( processInfo->path, lnode, true );
+    strId_t ldpathStrId = MyNode->GetStringId (processInfo->ldpath, lnode, true );
+    strId_t programStrId = MyNode->GetStringId ( processInfo->program, lnode, true );
+
+    CProcess *process = node->CloneProcess( processInfo->nid
+                                          , processInfo->type
+                                          , processInfo->priority
+                                          , processInfo->backup
+                                          , processInfo->unhooked
+                                          , processInfo->process_name
+                                          , processInfo->port_name
+                                          , processInfo->pid
+                                          , processInfo->verifier
+                                          , processInfo->parent_nid
+                                          , processInfo->parent_pid
+                                          , processInfo->parent_verifier
+                                          , processInfo->event_messages
+                                          , processInfo->system_messages
+                                          , pathStrId
+                                          , ldpathStrId
+                                          , programStrId
+//                                          , processInfo->pathStrId
+//                                          , processInfo->ldpathStrId
+//                                          , processInfo->programStrId
+                                          , processInfo->infile
+                                          , processInfo->outfile
+                                          , &processInfo->creation_time
+                                          , -1 );//processInfo->origPNidNs_);
+
+    TRACE_EXIT;
+    return(process);
+}
+
+void CNodeContainer::AddConfiguredZNodes( void )
+{
+    const char method_name[] = "CNodeContainer::AddConfiguredZNodes";
+    TRACE_ENTRY;
+
+    if (ZClientEnabled)
+    {
+        if (!IsAgentMode || (IsAgentMode && IsMaster))
+        {
+            CPNodeConfig *pnodeConfig = clusterConfig_->GetFirstPNodeConfig();
+            for ( ; pnodeConfig; pnodeConfig = pnodeConfig->GetNext() )
+            {
+                ZClient->ConfiguredZNodeCreate( pnodeConfig->GetName() );
+            }
+        }
+    }
+
+    TRACE_EXIT;
+}
+#endif
+
 CNode *CNodeContainer::AddNode( int pnid )
 {
     const char method_name[] = "CNodeContainer::AddNode";
@@ -1553,7 +2094,10 @@ CNode *CNodeContainer::AddNode( int pnid )
         if (!node)
         {
             node = new CNode( (char *)pnodeConfig->GetName()
-                            , pnodeConfig->GetPNid(), -1 );
+                            , (char *)pnodeConfig->GetDomain()
+                            , (char *)pnodeConfig->GetFqdn()
+                            , pnodeConfig->GetPNid()
+                            , -1 );
             assert( node != NULL );
     
             if ( node )
@@ -1563,6 +2107,13 @@ CNode *CNodeContainer::AddNode( int pnid )
 
                 // Broadcast node added notice to local processes
                 AddedNode( node );
+
+                char buf[MON_STRING_BUF_SIZE];
+                snprintf( buf, sizeof(buf)
+                        , "[%s@%d] Node %s added to configuration, pnid=%d\n"
+                        , method_name, __LINE__
+                        , node->GetName(), node->GetPNid() );
+                mon_log_write(MON_NODE_ADDNODE_4, SQ_LOG_INFO, buf);
             }
             else
             {
@@ -1629,8 +2180,37 @@ void CNodeContainer::AddNode( CNode *node )
         }
         else
         {
-            tail_ = tail_->Link(node);
+            // add to list in pnid sort order
+            if (node->GetPNid() < head_->GetPNid())
+            { // link new node to the begining
+                head_->LinkBefore( head_, node );
+            }
+            else if (node->GetPNid() > tail_->GetPNid())
+            { // link new node to the end
+                tail_->LinkAfter( tail_, node );
+            }
+            else
+            {
+                CNode *entry = head_;
+                CNode *prevEntry = NULL;
+                while (entry)
+                { // walk the list
+                    if (node->GetPNid() > entry->GetPNid())
+                    { // new node is greater than current list entry
+                        prevEntry = entry;
+                        entry = prevEntry->GetNext();
+                    }
+                    else
+                    { // new node is less than current list entry
+                        prevEntry->LinkAfter( tail_, node );
+                        entry = NULL;
+                    }
+                }
+            }
         }
+#ifdef NAMESERVER_PROCESS
+        AddLNodes( node );
+#else
         // now add logical nodes to physical node
         if (IAmIntegrating)
         {
@@ -1641,6 +2221,7 @@ void CNodeContainer::AddNode( CNode *node )
         {
             AddLNodes( node );
         }
+#endif
 
         if (trace_settings & TRACE_INIT)
         {
@@ -1672,9 +2253,9 @@ void CNodeContainer::AddNodes( )
     const char* envVar = getenv("SQ_MAX_RANK"); 
     int maxNode;
     if (envVar != NULL)
-      maxNode = atoi (envVar);
+        maxNode = atoi (envVar);
     else
-      maxNode = MAX_NODES; 
+        maxNode = MAX_NODES; 
 
     CPNodeConfig *pnodeConfig = clusterConfig_->GetFirstPNodeConfig();
     for ( ; pnodeConfig; pnodeConfig = pnodeConfig->GetNext() )
@@ -1691,6 +2272,8 @@ void CNodeContainer::AddNodes( )
             // add the spare node's pnid to the spare set
             sparePNids[pnodeConfig->GetSparesCount()] = pnid;
             node = new CNode( (char *)pnodeConfig->GetName()
+                            , (char *)pnodeConfig->GetDomain()
+                            , (char *)pnodeConfig->GetFqdn()
                             , pnid
                             , rank 
                             , pnodeConfig->GetSparesCount()+1
@@ -1712,7 +2295,11 @@ void CNodeContainer::AddNodes( )
             {
                 rank = -1; // -1 creates node in down state
             }
-            node = new CNode( (char *)pnodeConfig->GetName(), pnid, rank );
+            node = new CNode( (char *)pnodeConfig->GetName()
+                            , (char *)pnodeConfig->GetDomain()
+                            , (char *)pnodeConfig->GetFqdn()
+                            , pnid
+                            , rank );
             assert( node != NULL );
         }
         
@@ -1750,6 +2337,32 @@ void CNodeContainer::AddNodes( )
         {
             delete [] sparePNids;
             sparePNids = NULL;
+        }
+    }
+
+    TRACE_EXIT;
+}
+
+void CNodeContainer::AddLNodes( )
+{
+    const char method_name[] = "CNodeContainer::AddLNodes";
+    TRACE_ENTRY;
+
+    CNode *node;
+    int pnid;
+
+    CPNodeConfig *pnodeConfig = clusterConfig_->GetFirstPNodeConfig();
+    for ( ; pnodeConfig; pnodeConfig = pnodeConfig->GetNext() )
+    {
+        pnid = pnodeConfig->GetPNid();
+
+        node = Node[pnid];
+        assert( node != NULL );
+
+        // now add logical nodes to physical node
+        if (!IAmIntegrating)
+        {
+             AddLNodes( node );
         }
     }
 
@@ -1842,7 +2455,8 @@ void CNodeContainer::AddLNodes( CNode  *node1, CNode *node2 )
                       "configuration of physical node, pnid=%d\n"
                     , method_name, __LINE__, node2->GetPNid() );
             mon_log_write(MON_NODE_ADDLNODES_3, SQ_LOG_ERR, buf);
-            abort();
+
+            mon_failure_exit();
         }
     }
     else
@@ -1853,7 +2467,8 @@ void CNodeContainer::AddLNodes( CNode  *node1, CNode *node2 )
                   "pnid=%d\n"
                 , method_name, __LINE__, node2->GetPNid());
         mon_log_write(MON_NODE_ADDLNODES_4, SQ_LOG_ERR, buf);
-        abort();
+
+        mon_failure_exit();
     }
 
     TRACE_EXIT;
@@ -2002,7 +2617,9 @@ void CNodeContainer::UnpackNodeMappings( intBuffPtr_t &buffer, int nodeMapCount 
             trace_printf("%s@%d - Unpacking node mapping, pnidConfig=%d, pnid=%d \n",
                         method_name, __LINE__, pnidConfig, pnid);
 
+#ifndef NAMESERVER_PROCESS
         Nodes->AddLNodes( Nodes->GetNode(pnid), Nodes->GetNode(pnidConfig) );
+#endif
     }
 
     UpdateCluster();
@@ -2247,6 +2864,7 @@ void CNodeContainer::ChangedNode( CNode *node )
     TRACE_EXIT;
 }
 
+#ifndef NAMESERVER_PROCESS
 void CNodeContainer::CancelDeathNotification( int nid
                                             , int pid
                                             , int verifier
@@ -2267,7 +2885,194 @@ void CNodeContainer::CancelDeathNotification( int nid
 
     TRACE_EXIT;
 }
+#endif
    
+#ifndef NAMESERVER_PROCESS
+CProcess *CNodeContainer::CloneProcessNs( int nid
+                                        , int pid
+                                        , Verifier_t verifier )
+{
+    const char method_name[] = "CNodeContainer::CloneProcessNs";
+    TRACE_ENTRY;
+
+    CProcess *process = NULL;
+
+    struct message_def msg;
+    msg.type = MsgType_Service;
+    msg.noreply = false;
+    msg.reply_tag = REPLY_TAG;
+    msg.u.request.type = ReqType_ProcessInfoNs;
+
+    struct ProcessInfo_def *processInfo = &msg.u.request.u.process_info;
+    processInfo->nid = -1;
+    processInfo->pid = -1;
+    processInfo->verifier = -1;
+    processInfo->process_name[0] = 0;
+    processInfo->target_nid = nid;
+    processInfo->target_pid = pid;
+    processInfo->target_verifier = verifier;
+    processInfo->target_process_name[0] = 0;
+    processInfo->target_process_pattern[0] = 0;
+    processInfo->type = ProcessType_Undefined;
+    
+    int error = NameServer->ProcessInfoNs(&msg); // in reqQueue thread (CExternalReq)
+    if (error == 0)
+    {
+        if ( (msg.type == MsgType_Service) &&
+             (msg.u.reply.type == ReplyType_ProcessInfoNs) )
+        {
+            if ( msg.u.reply.u.process_info_ns.return_code == MPI_SUCCESS )
+            {
+                process = AddCloneProcess( &msg.u.reply.u.process_info_ns );
+            }
+            else
+            {
+                if (trace_settings & (TRACE_REQUEST | TRACE_PROCESS))
+                {
+                   trace_printf( "%s@%d - ProcessInfoNs(%d, %d:%d) -- can't find target process\n"
+                               , method_name, __LINE__
+                               , msg.u.reply.u.process_info_ns.nid
+                               , msg.u.reply.u.process_info_ns.pid
+                               , msg.u.reply.u.process_info_ns.verifier);
+                }
+
+                if ( msg.u.reply.u.process_info_ns.return_code != MPI_ERR_NAME )
+                {
+                    char buf[MON_STRING_BUF_SIZE];
+                    snprintf( buf, sizeof(buf),
+                              "[%s] ProcessInfo(%d, %d:%d) failed, rc=%d\n"
+                            , method_name
+                            , msg.u.reply.u.process_info_ns.nid
+                            , msg.u.reply.u.process_info_ns.pid
+                            , msg.u.reply.u.process_info_ns.verifier
+                            , msg.u.reply.u.process_info_ns.return_code );
+                    mon_log_write( MON_NODE_CLONEPROCESSNS_1, SQ_LOG_ERR, buf );
+                }
+            }
+        }
+        else
+        {
+            char buf[MON_STRING_BUF_SIZE];
+            snprintf( buf, sizeof(buf),
+                      "[%s], Invalid MsgType(%d)/ReplyType(%d) for "
+                      "ProcessInfoNs\n"
+                    , method_name, msg.type, msg.u.reply.type );
+            mon_log_write( MON_NODE_CLONEPROCESSNS_2, SQ_LOG_ERR, buf );
+        }
+    }
+    else
+    {
+        char la_buf[MON_STRING_BUF_SIZE];
+        snprintf( la_buf, sizeof(la_buf)
+                , "[%s] - Process info request to Name Server failed\n"
+                , method_name );
+        mon_log_write( MON_NODE_CLONEPROCESSNS_3, SQ_LOG_ERR, la_buf );
+    }
+
+    TRACE_EXIT;
+    return( process );
+}
+#endif
+   
+#ifndef NAMESERVER_PROCESS
+CProcess *CNodeContainer::CloneProcessNs( const char *name, Verifier_t verifier )
+{
+    const char method_name[] = "CNodeContainer::CloneProcessNs";
+    TRACE_ENTRY;
+
+    CProcess *process = NULL;
+
+    struct message_def msg;
+    msg.type = MsgType_Service;
+    msg.noreply = false;
+    msg.reply_tag = REPLY_TAG;
+    msg.u.request.type = ReqType_ProcessInfoNs;
+
+    struct ProcessInfo_def *processInfo = &msg.u.request.u.process_info;
+    processInfo->nid = -1;
+    processInfo->pid = -1;
+    processInfo->verifier = -1;
+    processInfo->process_name[0] = 0;
+    processInfo->target_nid = -1;
+    processInfo->target_pid = -1;
+    processInfo->target_verifier = verifier;
+    STRCPY( processInfo->target_process_name, name);
+    processInfo->target_process_pattern[0] = 0;
+    processInfo->type = ProcessType_Undefined;
+
+    int error = NameServer->ProcessInfoNs(&msg); // in reqQueue thread (CExternalReq)
+    if (error == 0)
+    {
+        if ( (msg.type == MsgType_Service) &&
+             (msg.u.reply.type == ReplyType_ProcessInfoNs) )
+        {
+            if ( msg.u.reply.u.process_info_ns.return_code == MPI_SUCCESS )
+            {
+                process = AddCloneProcess( &msg.u.reply.u.process_info_ns );
+            }
+            else
+            {
+                if (trace_settings & (TRACE_REQUEST | TRACE_PROCESS))
+                {
+                   trace_printf( "%s@%d - ProcessInfoNs(%s:%d) -- can't find target process\n"
+                               , method_name, __LINE__
+                               , msg.u.reply.u.process_info_ns.process_name
+                               , msg.u.reply.u.process_info_ns.verifier);
+                }
+
+                if ( msg.u.reply.u.process_info_ns.return_code != MPI_ERR_NAME )
+                {
+                    char buf[MON_STRING_BUF_SIZE];
+                    snprintf( buf, sizeof(buf),
+                              "[%s] ProcessInfo(%s:%d) failed, rc=%d\n"
+                            , method_name
+                            , msg.u.reply.u.process_info_ns.process_name
+                            , msg.u.reply.u.process_info_ns.verifier
+                            , msg.u.reply.u.process_info_ns.return_code );
+                    mon_log_write( MON_NODE_CLONEPROCESSNS_4, SQ_LOG_ERR, buf );
+                }
+            }
+        }
+        else
+        {
+            char buf[MON_STRING_BUF_SIZE];
+            snprintf( buf, sizeof(buf),
+                      "[%s], Invalid MsgType(%d)/ReplyType(%d) for "
+                      "ProcessInfo\n"
+                    , method_name, msg.type, msg.u.reply.type );
+            mon_log_write( MON_NODE_CLONEPROCESSNS_5, SQ_LOG_ERR, buf );
+        }
+    }
+    else
+    {
+        char la_buf[MON_STRING_BUF_SIZE];
+        snprintf( la_buf, sizeof(la_buf)
+                , "[%s] - Process info request to Name Server failed\n"
+                , method_name );
+        mon_log_write( MON_NODE_CLONEPROCESSNS_6, SQ_LOG_ERR, la_buf );
+    }
+
+    TRACE_EXIT;
+    return( process );
+}
+#endif
+   
+#ifndef NAMESERVER_PROCESS
+void CNodeContainer::DeleteCloneProcess( CProcess *process )
+{
+    const char method_name[] = "CNodeContainer::DeleteCloneProcess";
+    TRACE_ENTRY;
+
+    CNode *node;
+    node = Nodes->GetLNode(process->GetNid())->GetNode();
+    node->DelFromNameMap ( process );
+    node->DelFromPidMap ( process );
+    node->DeleteFromList( process );
+
+    TRACE_EXIT;
+}
+#endif
+
 void CNodeContainer::DeletedNode( CNode *node )
 {
     const char method_name[] = "CNodeContainer::DeletedNode";
@@ -2298,17 +3103,27 @@ bool CNodeContainer::DeleteNode( int pnid )
     TRACE_ENTRY;
 
     int rs = true;
+    string nodeName;
 
     CNode *pnode = GetNode( pnid );
     if ( pnode )
     {
+        nodeName = pnode->GetName();
         // Broadcast node deleted notice to local processes
         Nodes->DeletedNode( pnode );
 
         // Now delete it from the monitor's view
         Nodes->DeleteNode( pnode );
+
         // Verify it was deleted, sanity check!
-        assert( (pnode = Nodes->GetNode( pnid )) == NULL );
+        if ((pnode = Nodes->GetNode( pnid )) == NULL )
+        {
+            char buf[MON_STRING_BUF_SIZE];
+            snprintf( buf, sizeof(buf)
+                    , "[%s@%d] Node %s deleted from configuration, pnid=%d\n"
+                    , method_name, __LINE__, nodeName.c_str() , pnid);
+            mon_log_write(MON_NODE_DELETENODE_2, SQ_LOG_INFO, buf);
+        }
     }
     else
     {
@@ -2683,6 +3498,18 @@ CProcess *CNodeContainer::GetProcess( const char *name
     const char method_name[] = "CNodeContainer::GetProcess(name,verifier)";
     TRACE_ENTRY;
 
+    if (trace_settings & (TRACE_REQUEST_DETAIL | TRACE_PROCESS_DETAIL))
+    {
+        trace_printf( "%s@%d Getting %s:%d, "
+                      "checknode=%d, checkprocess=%d, backupOk=%d\n"
+                    , method_name, __LINE__
+                    , name
+                    , verifier
+                    , checknode
+                    , checkprocess
+                    , backupOk );
+    }
+
     while ( node )
     {
         if ( checknode )
@@ -2806,67 +3633,244 @@ CProcess *CNodeContainer::GetProcessByName( const char *name, bool checkstate )
     return( process );
 }
 
-SyncState CNodeContainer::GetTmState ( SyncState check_state )
+#ifndef NAMESERVER_PROCESS
+int CNodeContainer::GetProcessInfoNs( int nid
+                                    , int pid
+                                    , Verifier_t verifier
+                                    , ProcessInfoNs_reply_def *processInfo )
 {
-    SyncState state = check_state;
-    CNode *node = head_;
-    const char method_name[] = "CNodeContainer::GetTmState";
+    const char method_name[] = "CNodeContainer::GetProcessInfoNs";
     TRACE_ENTRY;
+
+    int rc = MPI_SUCCESS;
+
+    struct message_def msg;
+    msg.type = MsgType_Service;
+    msg.noreply = false;
+    msg.reply_tag = REPLY_TAG;
+    msg.u.request.type = ReqType_ProcessInfoNs;
+
+    struct ProcessInfo_def *process_info = &msg.u.request.u.process_info;
+    process_info->nid = -1;
+    process_info->pid = -1;
+    process_info->verifier = -1;
+    process_info->process_name[0] = 0;
+    process_info->target_nid = nid;
+    process_info->target_pid = pid;
+    process_info->target_verifier = verifier;
+    process_info->target_process_name[0] = 0;
+    process_info->target_process_pattern[0] = 0;
+    process_info->type = ProcessType_Undefined;
     
-    while (node)
+    int error = NameServer->ProcessInfoNs(&msg); // in reqQueue thread (CExternalReq)
+    if (error == 0)
     {
-        if ( node->GetState() == State_Up && ! node->IsSpareNode() && node->GetPhase() == Phase_Ready)
+        if ( (msg.type == MsgType_Service) &&
+             (msg.u.reply.type == ReplyType_ProcessInfoNs) )
         {
-            if ( check_state == SyncState_Start )
+            if ( msg.u.reply.u.process_info_ns.return_code == MPI_SUCCESS )
             {
-                if ( node->GetPNid() == MyPNID )
-                {
-                    if ( node->GetTmSyncState() != SyncState_Start )
-                    {
-                        state = SyncState_Abort;
-                        if (trace_settings & TRACE_TMSYNC)
-                           trace_printf("%s@%d" " - Node %s, pnid=%d" " no longer in Master Sync Start state" "\n", method_name, __LINE__, node->GetName(), node->GetPNid());
-                        break;
-                    }
-                }
-                else
-                {
-                    if ( node->GetTmSyncState() != SyncState_Continue )
-                    {
-                        state = SyncState_Abort;
-                        if (trace_settings & TRACE_TMSYNC)
-                           trace_printf("%s@%d" " - Node %s, pnid=%d" " doesn't agree on Sync Start state, returned state=" "%d" "\n", method_name, __LINE__, node->GetName(), node->GetPNid(), node->GetTmSyncState());
-                        break;
-                    }
-                }
+                *processInfo = msg.u.reply.u.process_info_ns;
             }
             else
             {
-                if ( check_state == SyncState_Suspended )
-                {
-                    state = node->GetTmSyncState();
-                    if ( state == SyncState_Suspended )
-                    {
-                        if (trace_settings & TRACE_TMSYNC)
-                           trace_printf("%s@%d" " - Node %s, pnid=%d" " is in TmSync Suspended state\n", method_name, __LINE__, node->GetName(), node->GetPNid());
-                        break;
-                    }
-                }
-                else if ( node->GetTmSyncState() != check_state )
-                {
-                    state = node->GetTmSyncState();
-                    if (trace_settings & TRACE_TMSYNC)
-                       trace_printf("%s@%d" " - Node %s, pnid=%d" " doesn't agree on TmState, returned state=" "%d" "\n", method_name, __LINE__, node->GetName(), node->GetPNid(), state);
-                    break;
-                }
+                char buf[MON_STRING_BUF_SIZE];
+                snprintf( buf, sizeof(buf),
+                          "[%s] ProcessInfo failed, rc=%d\n"
+                        , method_name, msg.u.reply.u.process_info_ns.return_code );
+                mon_log_write( MON_NODE_GETPROCESSNS_1, SQ_LOG_ERR, buf );
+            }
+            rc = msg.u.reply.u.process_info_ns.return_code;
+        }
+        else
+        {
+            char buf[MON_STRING_BUF_SIZE];
+            snprintf( buf, sizeof(buf),
+                      "[%s], Invalid MsgType(%d)/ReplyType(%d) for "
+                      "ProcessInfoNs\n"
+                    , method_name, msg.type, msg.u.reply.type );
+            mon_log_write( MON_NODE_GETPROCESSNS_2, SQ_LOG_ERR, buf );
+            rc = MPI_ERR_OP;
+        }
+    }
+    else
+    {
+        char la_buf[MON_STRING_BUF_SIZE];
+        snprintf( la_buf, sizeof(la_buf)
+                , "[%s] - Process info request to Name Server failed\n"
+                , method_name );
+        mon_log_write( MON_NODE_GETPROCESSNS_3, SQ_LOG_ERR, la_buf );
+        rc = MPI_ERR_OP;
+    }
+
+    TRACE_EXIT;
+    return( rc );
+}
+
+int CNodeContainer::GetProcessInfoNs( const char *name
+                                    , Verifier_t verifier
+                                    , ProcessInfoNs_reply_def *processInfo )
+{
+    const char method_name[] = "CNodeContainer::GetProcessInfoNs";
+    TRACE_ENTRY;
+
+    int rc = MPI_SUCCESS;
+
+    struct message_def msg;
+    msg.type = MsgType_Service;
+    msg.noreply = false;
+    msg.reply_tag = REPLY_TAG;
+    msg.u.request.type = ReqType_ProcessInfoNs;
+
+    struct ProcessInfo_def *process_info = &msg.u.request.u.process_info;
+    process_info->nid = -1;
+    process_info->pid = -1;
+    process_info->verifier = -1;
+    process_info->process_name[0] = 0;
+    process_info->target_nid = -1;
+    process_info->target_pid = -1;
+    process_info->target_verifier = verifier;
+    STRCPY( process_info->target_process_name, name);
+    process_info->target_process_pattern[0] = 0;
+    process_info->type = ProcessType_Undefined;
+
+    int error = NameServer->ProcessInfoNs(&msg); // in reqQueue thread (CExternalReq)
+    if (error == 0)
+    {
+        if ( (msg.type == MsgType_Service) &&
+             (msg.u.reply.type == ReplyType_ProcessInfoNs) )
+        {
+            if ( msg.u.reply.u.process_info_ns.return_code == MPI_SUCCESS )
+            {
+                *processInfo = msg.u.reply.u.process_info_ns;
+            }
+            else
+            {
+                char buf[MON_STRING_BUF_SIZE];
+                snprintf( buf, sizeof(buf),
+                          "[%s] ProcessInfo failed, rc=%d\n"
+                        , method_name, msg.u.reply.u.process_info_ns.return_code );
+                mon_log_write( MON_NODE_GETPROCESSNS_4, SQ_LOG_ERR, buf );
+            }
+            rc = msg.u.reply.u.process_info_ns.return_code;
+        }
+        else
+        {
+            char buf[MON_STRING_BUF_SIZE];
+            snprintf( buf, sizeof(buf),
+                      "[%s], Invalid MsgType(%d)/ReplyType(%d) for "
+                      "ProcessInfo\n"
+                    , method_name, msg.type, msg.u.reply.type );
+            mon_log_write( MON_NODE_GETPROCESSNS_5, SQ_LOG_ERR, buf );
+            rc = MPI_ERR_OP;
+        }
+    }
+    else
+    {
+        char la_buf[MON_STRING_BUF_SIZE];
+        snprintf( la_buf, sizeof(la_buf)
+                , "[%s] - Process info request to Name Server failed\n"
+                , method_name );
+        mon_log_write( MON_NODE_GETPROCESSNS_6, SQ_LOG_ERR, la_buf );
+        rc = MPI_ERR_OP;
+    }
+
+    TRACE_EXIT;
+    return( rc );
+}
+
+CProcess *CNodeContainer::GetProcessLByTypeNs( int nid, PROCESSTYPE type )
+{
+    const char method_name[] = "CNodeContainer::GetProcessLByTypeNs";
+    TRACE_ENTRY;
+
+    CProcess *process = NULL;
+
+    struct message_def msg;
+    msg.type = MsgType_Service;
+    msg.noreply = false;
+    msg.reply_tag = REPLY_TAG;
+    msg.u.request.type = ReqType_ProcessInfoNs;
+
+    struct ProcessInfo_def *processInfo = &msg.u.request.u.process_info;
+    processInfo->nid = -1;
+    processInfo->pid = -1;
+    processInfo->verifier = -1;
+    processInfo->process_name[0] = 0;
+    processInfo->target_nid = nid;
+    processInfo->target_pid = -1;
+    processInfo->target_verifier = -1;
+    processInfo->target_process_name[0] = 0;
+    processInfo->target_process_pattern[0] = 0;
+    processInfo->type = type;
+
+    if ( trace_settings & ( TRACE_PROCESS | TRACE_REQUEST) )
+    {
+        trace_printf( "%s@%d - Received monitor request process-info-ns data.\n"
+                      "        process_info.nid=%d\n"
+                      "        process_info.pid=%d\n"
+                      "        process_info.verifier=%d\n"
+                      "        process_info.target_nid=%d\n"
+                      "        process_info.target_pid=%d\n"
+                      "        process_info.target_verifier=%d\n"
+                      "        process_info.target_process_name=%s\n"
+                      "        process_info.target_process_pattern=%s\n"
+                      "        process_info.type=%d\n"
+                    , method_name, __LINE__
+                    , processInfo->nid
+                    , processInfo->pid
+                    , processInfo->verifier
+                    , processInfo->target_nid
+                    , processInfo->target_pid
+                    , processInfo->target_verifier
+                    , processInfo->target_process_name
+                    , processInfo->target_process_pattern
+                    , processInfo->type
+                    );
+    }
+
+    int error = NameServer->ProcessInfoNs(&msg); // in reqQueue thread (CExternalReq)
+    if (error == 0)
+    {
+        if ( (msg.type == MsgType_Service) &&
+             (msg.u.reply.type == ReplyType_ProcessInfoNs) )
+        {
+            if ( msg.u.reply.u.process_info_ns.return_code == MPI_SUCCESS )
+            {
+                process = AddCloneProcess( &msg.u.reply.u.process_info_ns );
+            }
+            else
+            {
+                char buf[MON_STRING_BUF_SIZE];
+                snprintf( buf, sizeof(buf),
+                          "[%s] ProcessInfo failed, rc=%d\n"
+                        , method_name, msg.u.reply.u.process_info_ns.return_code );
+                mon_log_write( MON_NODE_GETPROCESSLBYTYPENS_1, SQ_LOG_ERR, buf );
             }
         }
-        node = node->GetNext ();
+        else
+        {
+            char buf[MON_STRING_BUF_SIZE];
+            snprintf( buf, sizeof(buf),
+                      "[%s], Invalid MsgType(%d)/ReplyType(%d) for "
+                      "ProcessInfo\n"
+                    , method_name, msg.type, msg.u.reply.type );
+            mon_log_write( MON_NODE_GETPROCESSLBYTYPENS_2, SQ_LOG_ERR, buf );
+        }
     }
-    
+    else
+    {
+        char la_buf[MON_STRING_BUF_SIZE];
+        snprintf( la_buf, sizeof(la_buf)
+                , "[%s] - Process info request to Name Server failed\n"
+                , method_name );
+        mon_log_write( MON_NODE_GETPROCESSLBYTYPENS_3, SQ_LOG_ERR, la_buf );
+    }
+
     TRACE_EXIT;
-    return state;
+    return( process );
 }
+#endif
 
 CNode *CNodeContainer::GetZoneNode(int zid)
 {
@@ -2888,6 +3892,34 @@ CNode *CNodeContainer::GetZoneNode(int zid)
     return node;
 }
 
+void CNodeContainer::InitRecvBuffer( struct sync_buffer_def *recvBuf )
+{
+    const char method_name[] = "CNodeContainer::InitRecvBuffer";
+    TRACE_ENTRY;
+
+    struct internal_msg_def *msg;
+    struct sync_buffer_def  *rBuf;
+
+    for (int i = 0; i < GetPNodesCount(); i++)
+    {
+        rBuf = &recvBuf[indexToPnid_[i]];
+
+        rBuf->nodeInfo.node_state    = State_Unknown;
+        rBuf->nodeInfo.sdLevel       = ShutdownLevel_Undefined;
+        rBuf->nodeInfo.tmSyncState   = SyncState_Null;
+        rBuf->nodeInfo.internalState = State_Default;
+        rBuf->nodeInfo.change_nid    = -1;
+        rBuf->nodeInfo.seq_num       = 0;
+        rBuf->msgInfo.msg_count = 0;
+        rBuf->msgInfo.msg_offset = 0;
+
+        msg = (struct internal_msg_def *) &rBuf->msg[0];
+        msg->type = InternalType_Null;
+    }
+
+    TRACE_EXIT;
+}
+
 struct internal_msg_def *
 CNodeContainer::InitSyncBuffer( struct sync_buffer_def *syncBuf
                               , unsigned long long seqNum
@@ -2900,11 +3932,15 @@ CNodeContainer::InitSyncBuffer( struct sync_buffer_def *syncBuf
 
     syncBuf->nodeInfo.node_state    = MyNode->GetState();
     syncBuf->nodeInfo.sdLevel       = MyNode->GetShutdownLevel();
-    syncBuf->nodeInfo.tmSyncState   = MyNode->GetTmSyncState();
     syncBuf->nodeInfo.internalState = MyNode->getInternalState();
     syncBuf->nodeInfo.change_nid    = -1;
     syncBuf->nodeInfo.seq_num       = seqNum;
     syncBuf->nodeInfo.nodeMask      = upNodes;
+#ifdef NAMESERVER_PROCESS
+    syncBuf->nodeInfo.monConnCount  = MyNode->GetMonConnCount();
+#else
+    syncBuf->nodeInfo.monProcCount  = MyNode->GetNumProcs();
+#endif
 
     for (int i = 0; i < GetPNodesCount(); i++)
     {
@@ -2916,8 +3952,21 @@ CNodeContainer::InitSyncBuffer( struct sync_buffer_def *syncBuf
         }
     }
 
-    if (trace_settings & (TRACE_SYNC_DETAIL | TRACE_TMSYNC))
-        trace_printf( "%s@%d - Node %s (pnid=%d) node_state=(%d)(%s), internalState=%d, TmSyncState=(%d)(%s), change_nid=%d, seqNum_=%lld\n"
+    if (trace_settings & (TRACE_PROCESS_DETAIL | TRACE_SYNC_DETAIL | TRACE_TMSYNC))
+    {
+#ifdef NAMESERVER_PROCESS
+        trace_printf( "%s@%d - Node %s (pnid=%d) node_state=(%d)(%s), internalState=%d, change_nid=%d, seqNum_=%lld, monConnCount=%d\n"
+                    , method_name, __LINE__
+                    , MyNode->GetName()
+                    , MyPNID
+                    , syncBuf->nodeInfo.node_state
+                    , StateString( MyNode->GetState() )
+                    , syncBuf->nodeInfo.internalState
+                    , syncBuf->nodeInfo.change_nid
+                    , syncBuf->nodeInfo.seq_num
+                    , syncBuf->nodeInfo.monConnCount);
+#else
+        trace_printf( "%s@%d - Node %s (pnid=%d) node_state=(%d)(%s), internalState=%d, TmSyncState=(%d)(%s), change_nid=%d, seqNum_=%lld, monProcCount=%d\n"
                     , method_name, __LINE__
                     , MyNode->GetName()
                     , MyPNID
@@ -2927,7 +3976,10 @@ CNodeContainer::InitSyncBuffer( struct sync_buffer_def *syncBuf
                     , syncBuf->nodeInfo.tmSyncState
                     , SyncStateString( syncBuf->nodeInfo.tmSyncState )
                     , syncBuf->nodeInfo.change_nid
-                    , syncBuf->nodeInfo.seq_num);
+                    , syncBuf->nodeInfo.seq_num
+                    , syncBuf->nodeInfo.monProcCount);
+#endif
+    }
 
     syncBuf->msgInfo.msg_count = 0;
     syncBuf->msgInfo.msg_offset = 0;
@@ -2938,7 +3990,45 @@ CNodeContainer::InitSyncBuffer( struct sync_buffer_def *syncBuf
     syncBufferFreeSpace_ = ( MAX_SYNC_SIZE - 
                              (sizeof(cluster_state_def_t) + sizeof(msgInfo_t)));
 
+    TRACE_EXIT;
     return msg;
+}
+
+bool CNodeContainer::IsMyNodeFirstInConfigUp( void )
+{
+    const char method_name[] = "CNodeContainer::IsMyNodeFirstInConfigUp";
+    TRACE_ENTRY;
+
+    int pnid;
+    CNode *node = NULL;
+
+    CPNodeConfig *pnodeConfig = clusterConfig_->GetFirstPNodeConfig();
+    for ( ; pnodeConfig; pnodeConfig = pnodeConfig->GetNext() )
+    {
+        pnid = pnodeConfig->GetPNid();
+        node = GetNode( pnid );
+        if (node && node->GetState() == State_Up )
+        {
+            if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
+            {
+                trace_printf("%s@%d" " - MyPNID=%d, config pnid=%d\n"
+                            , method_name, __LINE__
+                            , MyPNID, pnid );
+            }
+
+            if (pnid == MyPNID)
+            {
+                return( true);
+            }
+            else
+            {
+                break;
+            }
+        }
+    }
+
+    TRACE_EXIT;
+    return( false);
 }
 
 bool CNodeContainer::IsShutdownActive (void)
@@ -3051,7 +4141,7 @@ void CNodeContainer::AddMsg (struct internal_msg_def *&msg,
     return;
 }
 
-
+#ifndef NAMESERVER_PROCESS
 void CNodeContainer::KillAll( CProcess *requester )
 {
     CNode *node = head_;
@@ -3067,6 +4157,7 @@ void CNodeContainer::KillAll( CProcess *requester )
 
     TRACE_EXIT;
 }
+#endif
 
 
 int CNodeContainer::ProcessCount( void )
@@ -3079,10 +4170,14 @@ int CNodeContainer::ProcessCount( void )
 
     while (node)
     {
+#ifdef NAMESERVER_PROCESS // don't check state
+        count += node->GetNumProcs();
+#else
         if ( node->GetState() == State_Up || node->GetState() == State_Shutdown )
         {
             count += node->GetNumProcs();
         }
+#endif
         node = node->GetNext ();
     }
 
@@ -3180,6 +4275,22 @@ void CNodeContainer::LoadConfig( void )
     if ( !clusterConfig_ )
     {
         clusterConfig_ = ClusterConfig;
+    }
+
+    if ( !nameServerConfig_ )
+    {
+        nameServerConfig_ = NameServerConfig;
+    }
+    if ( nameServerConfig_ )
+    {
+        if ( ! nameServerConfig_->LoadConfig() )
+        {
+            char la_buf[MON_STRING_BUF_SIZE];
+            sprintf(la_buf, "[%s], Failed to load nameserver configuration.\n", method_name);
+            mon_log_write(MON_NODECONT_LOAD_CONFIG_4, SQ_LOG_CRIT, la_buf);
+
+            mon_failure_exit();
+        }
     }
 
     TRACE_EXIT;

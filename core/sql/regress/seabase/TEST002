@@ -232,6 +232,7 @@ process hive statement 'drop table thivearr';
 process hive statement 'create table thivearr (a array<string>)';
 -- should return warning 8742
 select table_name from table(hivemd(columns)) where table_name = 'thivearr';
+process hive ddl 'drop table thivearr';
 
 process hive ddl 'drop table thivealldt';
 process hive ddl 'create table thivealldt(a smallint, b int, c bigint, d decimal(3,1), e string, f char(10), g varchar(7), h date, i timestamp)';
@@ -261,6 +262,7 @@ durability = 'async_wal',
 memstore_flush_size = '2000000',
 split_policy = 'org.apache.hadoop.hbase.regionserver.KeyPrefixRegionSplitPolicy',
 CACHE_DATA_IN_L1 = 'false',
+HDFS_STORAGE_POLICY = 'hot' ,
 prefetch_blocks_on_open = 'false'
 );
 

@@ -288,26 +288,6 @@ short ExDDLTcb::work()
 	{  // start of calling the standard arkcmp process
 	  cmp = getArkcmp();
 
-	  // This mxcmp will be used to process the ddl command.
-	  // Change the priority of mxcmp to be the same as 'this' process.
-	  // That will ensure that the processing in mxcmp and any esps it
-	  // starts follow the same priority settings as 'this' master executor.
-	  // One note: esp priority delta will be set to the system default for any
-	  // esps that are started by the mxcmp. This is because the SET PRIORITY
-	  // settings are currently not propagated to mxcmp.
-	  cmpStatus = cmp->changePriority(0, TRUE);
-	  if (cmpStatus != ExSqlComp::SUCCESS)
-	    {
-	      // Add a warning that change priority failed.
-	      // Continue processing with the original default.
-	      cpDiagsArea = ComDiagsArea::allocate(getHeap());
-
-	      *cpDiagsArea << DgSqlCode(15371) << DgString0("MXCMP");
-
-	      //	  handleErrors(pentry_down, cmp->getDiags(), (int) cmpStatus);
-	      //	  goto endOfData;
-	    }
-
 	  // ddl data is already in iso mapping default value.
 	  // Indicate that.
 	  // We cannot use the enum SQLCHARSETCODE_ISO_MAPPING out here as that 
@@ -352,23 +332,6 @@ short ExDDLTcb::work()
     endOfData:
       // all ok. Return EOF.
       ex_queue_entry * up_entry = qparent_.up->getTailEntry();
-
-      // restore mxcmp priority back to its original value
-      if (cmp)
-        {
-	  cmpStatus = 
-	    cmp->changePriority(
-				currContext->getSessionDefaults()->getMxcmpPriorityDelta(), TRUE);
-	  if (cmpStatus != ExSqlComp::SUCCESS)
-	    {
-	      // Add a warning that change priority failed.
-	      // Continue processing with the original default.
-	      if (cpDiagsArea == NULL)
-		cpDiagsArea = ComDiagsArea::allocate(getHeap());
-
-	      *cpDiagsArea << DgSqlCode(15371) << DgString0("MXCMP");
-	    }
-        }
 
       if (cpDiagsArea)
         {
@@ -479,6 +442,8 @@ short ExDDLwithStatusTcb::work()
             currEntry_ = 0;
             currPtr_ = NULL;
 
+            queryStartTime_ = NA_JulianTimestamp();
+
             if (ddlTdb().hbaseDDL())
               {
                 if (ddlTdb().hbaseDDLNoUserXn())
@@ -530,6 +495,9 @@ short ExDDLwithStatusTcb::work()
                 if (ddlTdb().getReturnDetails())
                   mdi_->setReturnDetails(TRUE);
               }
+            else if (ddlTdb().getInitTraf())
+              mdi_->setInitTraf(TRUE);
+
             mdi_->setHbaseDDL(TRUE);            
 
             if (ddlTdb().inputExpr_)
@@ -561,9 +529,6 @@ short ExDDLwithStatusTcb::work()
               {
                 callEmbeddedCmp_ = FALSE;
               }
-
-            // TEMP, until embedded call is fixed to handle returning status.
-            callEmbeddedCmp_ = FALSE;
 
             step_ = SETUP_NEXT_STEP_;
          }
@@ -608,8 +573,9 @@ short ExDDLwithStatusTcb::work()
                currContext->getSqlParserFlags(),
                parentQid, str_len(parentQid), cpDiagsArea);
 
-            getHeap()->deallocateMemory(data_);
- 
+            if (currContext->getDiagsArea())
+              currContext->getDiagsArea()->clear();
+
             if ((cpDiagsArea) &&
                 ((cpDiagsArea->getNumber(DgSqlCode::WARNING_) > 0) ||
                  (cpDiagsArea->getNumber(DgSqlCode::ERROR_) > 0)))
@@ -680,15 +646,18 @@ short ExDDLwithStatusTcb::work()
                 
                 replyDWS_ = (CmpDDLwithStatusInfo*)(new(getHeap()) char[replyBufLen_]);
                 memcpy((char*)replyDWS_, replyBuf_, replyBufLen_);
-                cmp_->getHeap()->deallocateMemory((void*)replyBuf_);
+                if (cmp_)
+                  cmp_->getHeap()->deallocateMemory((void*)replyBuf_);
+                else
+                  currContext->exHeap()->deallocateMemory((void*)replyBuf_);
                 replyBuf_ = NULL;
                 replyBufLen_ = 0;
 
                 replyDWS_->unpack((char*)replyDWS_);
 
-                if (mdi_->computeST())
+                if (replyDWS_->computeST())
                   startTime_ = NA_JulianTimestamp();
-                else if (mdi_->computeET())
+                else if (replyDWS_->computeET())
                   endTime_ = NA_JulianTimestamp();
               }
             
@@ -719,7 +688,19 @@ short ExDDLwithStatusTcb::work()
             char buf[1000];
             if (strlen(replyDWS_->msg()) > 0)
               {
-                str_sprintf(buf, "%s", replyDWS_->msg());
+                if (replyDWS_->returnET())
+                  {
+                    if (replyDWS_->done())
+                      startTime_ = queryStartTime_;
+
+                    char timeBuf[100];
+                    ExExeUtilTcb::getTimeAsString((endTime_-startTime_), timeBuf,
+                                                  TRUE);
+                    str_sprintf(buf, "%s {ET: %s}", replyDWS_->msg(),
+                                timeBuf);
+                  }
+                else
+                  str_sprintf(buf, "%s", replyDWS_->msg());
                 if (moveRowToUpQueue(&qparent_, ddlTdb().tuppIndex(), buf, 0, &rc))
                   return rc;
               }
@@ -1632,6 +1613,11 @@ short ExProcessVolatileTableTcb::work()
 	case REMOVE_FROM_VOL_TAB_LIST_:
 	  {
 	    HashQueue * volTabList = currContext->getVolTabList();
+	    if (volTabList == NULL) {
+	       step_ = DONE_;
+	       break;
+	    }
+        
 	    volTabList->position(pvtTdb().volTabName_,
 				 pvtTdb().volTabNameLen_);
 	    void * name = volTabList->getNext();

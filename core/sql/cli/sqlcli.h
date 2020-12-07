@@ -1,4 +1,4 @@
-/**********************************************************************
+/*********************************************************************
 // @@@ START COPYRIGHT @@@
 //
 // Licensed to the Apache Software Foundation (ASF) under one
@@ -237,6 +237,7 @@ enum PARAMETER_MODE {
 #define SQLCHARSETSTRING_BIG5              "BIG5"
 #define SQLCHARSETSTRING_UCS2              SQLCHARSETSTRING_UNICODE
 #define SQLCHARSETSTRING_ISO_MAPPING       "ISO_MAPPING"
+#define SQLCHARSETSTRING_BINARY            "BINARY"
 #endif /* SQLCHARSETSTRING_DEFINED */
 
 /* specifies the supported character sets (for numeric value version of 
@@ -259,6 +260,7 @@ enum SQLCHARSET_CODE {
   SQLCHARSETCODE_MB_KSC5601     = 16,
   SQLCHARSETCODE_GB2312         = 17,
   SQLCHARSETCODE_GBK            = 18,
+  SQLCHARSETCODE_BINARY         = 19,
 
   /* specifies that the user input string is in the same charset that is
      set as the value of the ISO_MAPPING default in the defaults table.
@@ -401,12 +403,19 @@ enum SQLTYPE_CODE {
 
     /* LONG VARCHAR/ODBC CHARACTER VARYING */
     SQLTYPECODE_VARCHAR_LONG  = -1,		/* ## NEGATIVE??? */
+
     /* BLOB TYPE */
     SQLTYPECODE_BLOB  = -602,
     SQLTYPECODE_CLOB  = -603,
 
     /* BOOLEAN TYPE */
     SQLTYPECODE_BOOLEAN = -701,
+
+    /* BINARY TYPE */
+    SQLTYPECODE_BINARY = 60,
+
+    /* VARBINARY TYPE */
+    SQLTYPECODE_VARBINARY = 61,
 
     /* no ANSI value 13 */
 
@@ -693,10 +702,11 @@ enum SQLTRANS_COMMAND {
      to abort any implicit transactions started by cli */
   SQLTRANS_ROLLBACK_IMPLICIT_XN = 8,
 
-  SQLTRANS_BEGIN_WITH_DP2_XNS   = 9,
-
   /* inherit the global transaction and make it the current xn */
-  SQLTRANS_INHERIT          = 10
+  SQLTRANS_INHERIT          = 10,
+
+  SQLTRANS_SUSPEND          = 11,
+  SQLTRANS_RESUME           = 12,
 };
 
 /* specifies the type/format of an AUTHID */
@@ -1025,9 +1035,10 @@ enum SQLSTATS_DESC_STATS_TYPE {
   SQLSTATS_DESC_REPLICATOR_STATS = 20,
   SQLSTATS_DESC_FAST_EXTRACT_STATS = 21,
   SQLSTATS_DESC_REORG_STATS = 22,
+  SQLSTATS_DESC_SE_STATS = 23,
   SQLSTATS_DESC_HDFSSCAN_STATS = 23,
-  SQLSTATS_DESC_HBASE_ACCESS_STATS = 24,
-  SQLSTATS_DESC_PROCESS_STATS = 25
+  SQLSTATS_DESC_HBASE_ACCESS_STATS = 23,
+  SQLSTATS_DESC_PROCESS_STATS = 25,
 };
 
 
@@ -1051,7 +1062,6 @@ enum SQLSTATS_ITEM_ID {
   SQLSTATS_NUM_SQLPROCS = 15,
   SQLSTATS_NUM_CPUS = 16,
   SQLSTATS_SOURCE_STR = 17,
-  SQLSTATS_MASTER_PRIORITY = 18,
   SQLSTATS_TRANSID = 19,
   SQLSTATS_CHILD_QUERY_ID = 200,
   SQLSTATS_RECLAIM_SPACE_COUNT = 201,
@@ -1128,10 +1138,8 @@ enum SQLSTATS_ITEM_ID {
   SQLSTATS_NODE_NAME = 101,
   SQLSTATS_CPU = 102,
   SQLSTATS_SSCP_PID = 103,
-  SQLSTATS_SSCP_PRIORITY = 104,
   SQLSTATS_SSCP_TIMESTAMP = 105,
   SQLSTATS_SSMP_PID = 106,
-  SQLSTATS_SSMP_PRIORITY = 107,
   SQLSTATS_SSMP_TIMESTAMP = 108,
   SQLSTATS_STORE_SRC_LEN = 109,
   SQLSTATS_RMS_ENV_TYPE = 110,
@@ -1157,6 +1165,7 @@ enum SQLSTATS_ITEM_ID {
   SQLSTATS_RMS_STATS_RESET_TIMESTAMP = 130,
   SQLSTATS_RMS_STATS_NUM_SQL_SIK = 131,
   SQLSTATS_PROCESS_STATS_HEAPS = 132,
+  SQLSTATS_RMS_CONFIGURED_PID_MAX = 133,
 /* SQLSTATS_ITEM_ID for BMO_STATS */
   SQLSTATS_BMO_HEAP_USED = 150,
   SQLSTATS_BMO_HEAP_ALLOC = 151,
@@ -1895,7 +1904,7 @@ Int32 SQL_EXEC_SETSTMTATTR(
 Int32 SQL_EXEC_SwitchContext(
 		/*IN*/ SQLCTX_HANDLE context_handle,
 		/*OUT OPTIONAL*/ SQLCTX_HANDLE * prev_context_handle);
-
+               
 Int32 SQL_EXEC_SWITCHCONTEXT(
 		/*IN*/ SQLCTX_HANDLE context_handle,
 		/*OUT OPTIONAL*/ SQLCTX_HANDLE * prev_context_handle);

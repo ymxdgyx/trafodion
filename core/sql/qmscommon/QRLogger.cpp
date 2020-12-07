@@ -41,6 +41,7 @@
 #include "seabed/fserr.h"
 
 BOOL gv_QRLoggerInitialized_ = FALSE;
+QRLogger *gv_QRLoggerInstance_ = NULL;
 
 using namespace log4cxx;
 using namespace log4cxx::helpers;
@@ -99,8 +100,9 @@ QRLogger::QRLogger()
 // **************************************************************************
 QRLogger& QRLogger::instance()
 {
-  static QRLogger onlyInstance_;
-  return onlyInstance_;
+  if (gv_QRLoggerInstance_ == NULL)
+     gv_QRLoggerInstance_ = new QRLogger();
+  return *gv_QRLoggerInstance_;
 }
 
 
@@ -175,39 +177,7 @@ NABoolean QRLogger::initLog4cxx(const char* configFileName)
   if (gv_QRLoggerInitialized_)
      return TRUE;
  
-  // get the log directory
-  logFileName = "";
-
-  // gets the top ancestor process name that will be used to name the file appender log
-  char logFileSuffix [100]="";
-  NABoolean singleSqlLogFile = TRUE;
-  if (getenv("TRAF_MULTIPLE_SQL_LOG_FILE")) 
-     singleSqlLogFile = FALSE; 
-  switch (module_)
-  {
-    case QRL_NONE:
-    case QRL_MXCMP:
-    case QRL_ESP:
-    case QRL_MXEXE:
-    case QRL_UDR:
-      if (singleSqlLogFile) 
-         getMyNidSuffix(logFileSuffix);
-      else 
-         getMyTopAncestor(logFileSuffix);
-      break;
-    case QRL_LOB:
-      getMyNidSuffix(logFileSuffix);
-      break; 
-    case QRL_SSMP:
-    case QRL_SSCP:
-      getMyNidSuffix(logFileSuffix);
-      break;
-    default:
-      break;
-  }
-
-  
-  if (CommonLogger::initLog4cxx(configFileName, logFileSuffix))
+  if (CommonLogger::initLog4cxx(configFileName))
   {
     introduceSelf();
     gv_QRLoggerInitialized_ = TRUE;
@@ -590,9 +560,7 @@ void QRLogger::log(const std::string &cat,
 NABoolean QRLogger::initLog4cxx(ExecutableModule module)
 {
    NABoolean retcode;
-   bool singleSqlLogFile = TRUE;
-   if (getenv("TRAF_MULTIPLE_SQL_LOG_FILE"))
-      singleSqlLogFile = FALSE;
+   static bool singleSqlLogFile = (getenv("TRAF_MULTIPLE_SQL_LOG_FILE") == NULL);
    QRLogger::instance().setModule(module);
    if (singleSqlLogFile)
       retcode =  QRLogger::instance().initLog4cxx("log4cxx.trafodion.sql.config");

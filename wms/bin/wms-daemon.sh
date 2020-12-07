@@ -26,7 +26,7 @@
 #
 # Environment Variables
 #
-#   WMS_CONF_DIR   Alternate WMS conf dir. Default is ${WMS_HOME}/conf.
+#   WMS_CONF_DIR   Alternate WMS conf dir. Default is ${TRAF_CONF}/wms.
 #   WMS_LOG_DIR    Where log files are stored.  PWD by default.
 #   WMS_PID_DIR    The pid files are stored. /tmp by default.
 #   WMS_IDENT_STRING   A string representing this instance. $USER by default
@@ -98,7 +98,7 @@ wait_until_done ()
 
 # get log directory
 if [ "$WMS_LOG_DIR" = "" ]; then
-  export WMS_LOG_DIR="$WMS_HOME/logs"
+  export WMS_LOG_DIR="$TRAF_LOG/wms"
 fi
 mkdir -p "$WMS_LOG_DIR"
 

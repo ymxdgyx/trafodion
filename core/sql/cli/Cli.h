@@ -536,9 +536,10 @@ Int32 SQLCLI_GetAuthState (
 
 Lng32 SQLCLI_GetRoleList(
    CliGlobals *cliGlobals,
-   Int32 &numRoles,
-   Int32 *&roleIDs);
-                         
+   Int32 &numEntries,
+   Int32 *& roleIDs,
+   Int32 *& granteeIDs);
+
 Lng32 SQLCLI_ResetRoleList (
     /*IN*/            CliGlobals *cliGlobals);
 
@@ -606,7 +607,8 @@ Lng32 SQLCLI_GetStmtAttrs( /*IN*/ CliGlobals *cliGlobals,
 
    Lng32 SQLCLI_SwitchContext(/*IN*/           CliGlobals    * cliGlobals,
                              /*IN*/           SQLCTX_HANDLE   ctxt_handle,
-                             /*OUT OPTIONAL*/ SQLCTX_HANDLE * prev_ctxt_handle);
+                              /*OUT OPTIONAL*/ SQLCTX_HANDLE * prev_ctxt_handle,
+                              /*IN */ bool allowSwitchBackToDefault);
 
    Lng32 SQLCLI_Xact(/*IN*/                 CliGlobals * cliGlobals,
                     /*IN* (SQLTRANS_COMMAND) */  Lng32   command,
@@ -763,7 +765,13 @@ Lng32 SQLCLI_GetSecInvalidKeys(CliGlobals *cliGlobals,
             /* IN/OUT */  Int32 *returnedNumSiKeys,
             /* IN/OUT */  Int64 *maxTimestamp);
 
-
+Lng32 SQLCLI_SetLobLock(CliGlobals *cliGlobals,
+                        /* IN */    char * lobLockId
+                        );
+Lng32 SQLCLI_CheckLobLock(CliGlobals *cliGlobals,
+                        /* IN */   char *lobLockId,
+                        /*OUT */ NABoolean *found
+                          );
 Lng32 SQLCLI_GetStatistics2(CliGlobals *cliGlobals,
             /* IN */  	short statsReqType,
 	    /* IN */  	char *statsReqStr,

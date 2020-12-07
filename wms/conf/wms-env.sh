@@ -80,14 +80,14 @@ export WMS_OPTS="-XX:+UseConcMarkSweepGC"
 # export WMS_THRIFT_OPTS="$WMS_THRIFT_OPTS $WMS_JMX_BASE -Dcom.sun.management.jmxremote.port=10103"
 # export WMS_ZOOKEEPER_OPTS="$WMS_ZOOKEEPER_OPTS $WMS_JMX_BASE -Dcom.sun.management.jmxremote.port=10104"
 
-# File naming hosts on which WMS Servers will run.  $WMS_HOME/conf/servers by default.
-# export WMS_SERVERS=${WMS_HOME}/conf/servers
+# File naming hosts on which WMS Servers will run.  $TRAF_CONF/wms/servers by default.
+# export WMS_SERVERS=${TRAF_CONF}/wms/servers
 
 # Extra ssh options.  Empty by default.
 # export WMS_SSH_OPTS="-o ConnectTimeout=1 -o SendEnv=WMS_CONF_DIR"
 
-# Where log files are stored.  $WMS_HOME/logs by default.
-# export WMS_LOG_DIR=${WMS_HOME}/logs
+# Where log files are stored.  $TRAF_LOG/wms by default.
+# export WMS_LOG_DIR=$TRAF_LOG/wms
 
 # Enable remote JDWP debugging of major wms processes. Meant for Core Developers 
 # export WMS_MASTER_OPTS="$WMS_MASTER_OPTS -Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=8070"

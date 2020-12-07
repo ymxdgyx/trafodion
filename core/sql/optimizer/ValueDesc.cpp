@@ -417,6 +417,20 @@ void ValueId::coerceType(const NAType& desiredType,
                SQLVarChar(STMTHEAP, SQL_BOOLEAN_DISPLAY_SIZE, 
                           desiredType.supportsSQLnull());
            }
+	 else if ((DFS2REC::isBinaryString(desiredType.getFSDatatype())) &&
+                  (CmpCommon::getDefault(TRAF_BINARY_INPUT) == DF_OFF))
+	   {
+             if (desiredType.getFSDatatype() == REC_BINARY_STRING)
+               newType = new (STMTHEAP) 
+                 SQLChar(STMTHEAP,
+                         desiredType.getNominalSize(), 
+                         desiredType.supportsSQLnull());
+             else
+               newType = new (STMTHEAP) 
+                 SQLVarChar(STMTHEAP,
+                            desiredType.getNominalSize(), 
+                            desiredType.supportsSQLnull());               
+	   } // Binary String
 	 else if (DFS2REC::isBigNum(desiredType.getFSDatatype()))
 	   {
 	     // If bignum IO is not enabled or
@@ -6382,7 +6396,32 @@ void ValueIdList::convertToTextKey(const ValueIdList& keyList, NAString& result)
 	 {
            short vLen = val.length();
 
-	   if ((constType->getTypeQualifier()  == NA_NUMERIC_TYPE) &&
+	   if (constType->getTypeQualifier() == NA_INTERVAL_TYPE)
+	     {
+	       // In some code paths, the text may have "INTERVAL 'xxx' <qualifier>"
+	       // junk around it so we have to strip that off. (Example: An equality
+	       // predicate when query caching has been turned off via 
+	       // CQD QUERY_CACHE '0'. Another example happens with BETWEEN, whether 
+	       // or not query caching is turned off. See JIRA TRAFODION-3088 for
+	       // that example.)
+	       Lng32 start = val.index("'");
+	       Lng32 minus = val.index("-");
+	       if (start > 0)
+	         {
+	           Lng32 end = val.index("'", start+1);
+	           if (end > 0)
+	             {
+	               val = val(start+1, (end-start-1));
+	               if ((minus > 0) && (minus < start))  // '-' before the string part
+	                 {
+	                   // prepend '-' to the output
+	                   val.prepend('-', 1);
+	                 }
+	               vLen = val.length();		         
+	             }
+	         }             
+	     }
+	   else if ((constType->getTypeQualifier()  == NA_NUMERIC_TYPE) &&
 	       (((NumericType*)constType)->isExact()) &&
                (NOT ((NumericType*)constType)->isBigNum()) &&
 	       (constType->getScale() > 0))

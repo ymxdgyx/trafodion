@@ -43,13 +43,11 @@ public class T2Properties {
 
     private String catalog_;
     private String schema_;
-    private String mploc_;
     private int batchBindingSize_;
-    private int sql_nowait;
     private int traceFlag_;
     private String traceFile_;
-    private String clobTableName_;
-    private String blobTableName_;
+    private int inlineLobChunkSize_;
+    private int lobChunkSize_; 
     private int transactionMode_;
     private String iso88591EncodingOverride_;
     private String stmtatomicity_;
@@ -78,10 +76,6 @@ public class T2Properties {
     private int initialPoolSize_;
     private int maxIdleTime_;
     private int maxStatements_;
-
-    //MFC
-    private String enableMFC_;
-    private String compiledModuleLocation_;
 
     private String externalCallHandler = "NONE";
     private String externalCallPrefix = "EXT";
@@ -167,20 +161,6 @@ public class T2Properties {
     }
 
     /**
-     * @return the mploc_
-     */
-    public String getMploc() {
-        return mploc_;
-    }
-
-    /**
-     * @param mploc_ the mploc_ to set
-     */
-    public void setMploc(String mploc_) {
-        this.mploc_ = mploc_;
-    }
-
-    /**
      * @return the batchBindingSize_
      */
     public int getBatchBinding() {
@@ -219,31 +199,6 @@ public class T2Properties {
         setBatchBinding(bbSize);
     }
 
-
-
-    /**
-     * @return the sql_nowait
-     */
-    public int getSqlmx_nowait() {
-        return sql_nowait;
-    }
-
-    /**
-     * @param sql_nowait the sql_nowait to set
-     */
-    public void setSqlmx_nowait(String nowaitFlag) {
-        if (nowaitFlag == null)
-            this.sql_nowait = 1;
-        else {
-            if (nowaitFlag.equalsIgnoreCase("off") || nowaitFlag.equals("0")) //when setSqlmx_nowait called with zero
-                this.sql_nowait = 0;
-            else if (nowaitFlag.equalsIgnoreCase("on_olt_off")|| nowaitFlag.equals("2"))
-                this.sql_nowait = 2;
-            else
-                this.sql_nowait = 1;
-        }
-//		this.sql_nowait = sql_nowait;
-    }
 
     /**
      * @return the traceFlag_
@@ -304,32 +259,38 @@ public class T2Properties {
         }
     }
 
-    /**
-     * @return the clobTableName_
-     */
-    public String getClobTableName() {
-        return clobTableName_;
+    public int getInlineLobChunkSize()
+    {
+       return inlineLobChunkSize_;
     }
 
-    /**
-     * @param clobTableName_ the clobTableName_ to set
-     */
-    public void setClobTableName(String clobTableName_) {
-        this.clobTableName_ = clobTableName_;
+    public void setInlineLobChunkSize(int size)
+    {
+       inlineLobChunkSize_ = size;       
     }
 
-    /**
-     * @return the blobTableName_
-     */
-    public String getBlobTableName() {
-        return blobTableName_;
+    public void setInlineLobChunkSize(String sz) {
+       int size = 0;
+       if (sz !=  null) 
+          size = Integer.parseInt(sz);
+       setInlineLobChunkSize(size);
     }
 
-    /**
-     * @param blobTableName_ the blobTableName_ to set
-     */
-    public void setBlobTableName(String blobTableName_) {
-        this.blobTableName_ = blobTableName_;
+    public int getLobChunkSize()
+    {
+        return lobChunkSize_;
+    }
+
+    public void setLobChunkSize(int size)
+    {
+       lobChunkSize_ = size;       
+    }
+
+    public void setLobChunkSize(String sz) {
+       int size = 0;
+       if (sz !=  null) 
+          size = Integer.parseInt(sz);
+       setLobChunkSize(size);
     }
 
     /**
@@ -655,39 +616,6 @@ public class T2Properties {
         setMaxStatements(maxStmt);
 
     }
-    /**
-     * @return the enableMFC_
-     */
-    public String getEnableMFC() {
-        return enableMFC_;
-    }
-
-    /**
-     * @param enableMFC_ the enableMFC_ to set
-     */
-    public void setEnableMFC(String enableMFC_) {
-        if(enableMFC_ != null)
-            this.enableMFC_ = enableMFC_.toUpperCase();
-        else
-            this.enableMFC_ = "OFF";
-    }
-
-    /**
-     * @return the compiledModuleLocation_
-     */
-    public String getCompiledModuleLocation() {
-        return compiledModuleLocation_;
-    }
-
-    /**
-     * @param compiledModuleLocation_ the compiledModuleLocation_ to set
-     */
-    public void setCompiledModuleLocation(String compiledModuleLocation_) {
-        if(compiledModuleLocation_ !=null)
-            this.compiledModuleLocation_ = compiledModuleLocation_;
-        else
-            this.compiledModuleLocation_ = "/usr/tandem/sqlmx/USERMODULES";
-    }
 
     /**
      * @return the externalCallHandler
@@ -945,6 +873,8 @@ public class T2Properties {
 
     void initialize(Properties props) {
         inprops_ = props;
+        inlineLobChunkSize_ = 16*1024;
+        lobChunkSize_ = 16*1024*1024;
         setProperties();
     }
 
@@ -1012,8 +942,6 @@ public class T2Properties {
         setSchema(getProperty("schema"));
         setBatchBinding(getProperty("batchBinding"));
         setLanguage(getProperty("language"));
-        setMploc(getProperty("mploc"));
-        setSqlmx_nowait(getProperty("sql_nowait"));
         setSpjrs(getProperty("Spjrs"));
         setStmtatomicity(getProperty("stmtatomicity"));
 //		setStmtatomicityval(getProperty(""));
@@ -1026,13 +954,8 @@ public class T2Properties {
         setMaxStatements(getProperty("maxStatements"));
         setMinPoolSize(getProperty("minPoolSize"));
         setInitialPoolSize(getProperty("initialPoolSize"));
-
-        setBlobTableName(getProperty("blobTableName"));
-        setClobTableName(getProperty("clobTableName"));
-
-        setEnableMFC(getProperty("enableMFC"));
-        setCompiledModuleLocation(getProperty("compiledModuleLocation"));
-
+	setInlineLobChunkSize(getProperty("inlineLobChunkSize"));
+	setLobChunkSize(getProperty("lobChunkSize"));
 
 //		setContBatchOnErrorval(getProperty(""));
 
@@ -1064,10 +987,6 @@ public class T2Properties {
             props.setProperty("schema", schema_);
 
         props.setProperty("batchBinding", String.valueOf(batchBindingSize_));
-        if (getMploc() != null)
-            props.setProperty("mploc", mploc_);
-
-        props.setProperty("sql_nowait", String.valueOf(sql_nowait));
         if (getSpjrs() != null)
             props.setProperty("Spjrs", Spjrs_);
 
@@ -1085,15 +1004,8 @@ public class T2Properties {
         props.setProperty("maxStatements", String.valueOf(maxStatements_));
         props.setProperty("minPoolSize", String.valueOf(minPoolSize_));
         props.setProperty("initialPoolSize", String.valueOf(initialPoolSize_));
-
-        if (getBlobTableName() != null)
-            props.setProperty("blobTableName", blobTableName_);
-        if (getClobTableName() != null)
-            props.setProperty("clobTableName", clobTableName_);
-        if (getEnableMFC() != null)
-            props.setProperty("enableMFC", enableMFC_);
-        if (getCompiledModuleLocation() != null)
-            props.setProperty("compiledModuleLocation", compiledModuleLocation_);
+ 	props.setProperty("inlineLobChunkSize", String.valueOf(inlineLobChunkSize_));
+ 	props.setProperty("lobChunkSize", String.valueOf(lobChunkSize_));
 
         // props.setProperty("",);
         // props.setProperty("enableLog",);
@@ -1144,11 +1056,6 @@ public class T2Properties {
         propertyInfo[i].description = "Specifies that statements are batched together in the executeBatch() operation.";
         propertyInfo[i++].choices = null;
 
-        propertyInfo[i] = new java.sql.DriverPropertyInfo("mploc",
-                mploc_);
-        propertyInfo[i].description = "Specifies the Guardian location in which SQL tables are created.";
-        propertyInfo[i++].choices = null;
-
         propertyInfo[i] = new java.sql.DriverPropertyInfo(
                 "maxPoolSize", Integer.toString(maxPoolSize_));
         propertyInfo[i].description = "Sets the maximum number of physical connections that the pool can contain.";
@@ -1185,13 +1092,13 @@ public class T2Properties {
         propertyInfo[i++].choices = null;
 
         propertyInfo[i] = new java.sql.DriverPropertyInfo(
-                "clobTableName", clobTableName_);
-        propertyInfo[i].description = "Specifies the LOB table for using CLOB columns.";
+                "inlineLobChunkSize", Integer.toString(inlineLobChunkSize_));
+        propertyInfo[i].description = "Specifies the LOB chunk size that can be inlined along with row.";
         propertyInfo[i++].choices = null;
 
         propertyInfo[i] = new java.sql.DriverPropertyInfo(
-                "blobTableName", blobTableName_);
-        propertyInfo[i].description = "Specifies the LOB table for using BLOB columns.";
+                "lobChunkSize", Integer.toString(lobChunkSize_));
+        propertyInfo[i].description = "Specifies the LOB chunk size for streaming.";
         propertyInfo[i++].choices = null;
 
         propertyInfo[i] = new java.sql.DriverPropertyInfo(
@@ -1228,13 +1135,6 @@ public class T2Properties {
                 "idMapFile", idMapFile);
         propertyInfo[i].description = "Specifies the file to which the trace facility logs SQL statement IDs and the corresponding JDBC SQL statements.";
         propertyInfo[i++].choices = null;
-        /*
-         * MFC: Module Caching Description: Type 2 driver now supports
-         * compiled module caching
-         */
-        propertyInfo[i] = new java.sql.DriverPropertyInfo("enableMFC",
-                enableMFC_);
-        propertyInfo[i++].choices = null;
         propertyInfo[i] = new java.sql.DriverPropertyInfo("queryExecuteTime",Long.toString(queryExecuteTime_));
         propertyInfo[i].description="Sets the queryExecuteTime";
         propertyInfo[i++].choices = null;
@@ -1243,14 +1143,6 @@ public class T2Properties {
         propertyInfo[i].description="set the Trace file to log sql queries which are taking more the queryExecuteTime";
         propertyInfo[i++].choices = null;
 
-        propertyInfo[i].description = "Sets module caching feature to on or off";
-        propertyInfo[i++].choices = null;
-
-        propertyInfo[i] = new java.sql.DriverPropertyInfo(
-                "compiledModuleLocation", compiledModuleLocation_);
-        propertyInfo[i].description = "Specifies the directory to cache the compiled modules";
-        propertyInfo[i++].choices = null;
-// Publishing
         propertyInfo[i] = new java.sql.DriverPropertyInfo(
                 "statisticsIntervalTime", Integer.toString(statisticsIntervalTime_));
         propertyInfo[i].description = "Time in seconds on how often the aggregation data should be published. Default is 60";
@@ -1294,7 +1186,6 @@ public class T2Properties {
         ref.add(new StringRefAddr("catalog", getCatalog()));
         ref.add(new StringRefAddr("schema", getSchema()));
         ref.add(new StringRefAddr("language", getLanguage()));
-        ref.add(new StringRefAddr("mploc", getMploc()));
         /* Description: Adding the reference to ISO88591 encoding */
         ref.add(new StringRefAddr("ISO88591", getIso88591EncodingOverride()));
         ref.add(new StringRefAddr("batchBinding", Integer
@@ -1311,13 +1202,12 @@ public class T2Properties {
                 .toString(getMaxIdleTime())));
 //		ref.add(new StringRefAddr("propertyCycle", Integer
 //				.toString(propertyCycle_)));
-        ref.add(new StringRefAddr("clobTableName", getClobTableName()));
-        ref.add(new StringRefAddr("blobTableName", getBlobTableName()));
+        ref.add(new StringRefAddr("inlineLobChunkSize", Integer
+                .toString(getInlineLobChunkSize())));
+        ref.add(new StringRefAddr("lobChunkSize", Integer
+                .toString(getLobChunkSize())));
         ref.add(new StringRefAddr("transactionMode",getTransactionMode()));
         ref.add(new StringRefAddr("contBatchOnError",getContBatchOnError()));
-        //Renamed the modulecaching property as enableMFC
-        ref.add(new StringRefAddr("enableMFC", getEnableMFC()));
-        ref.add(new StringRefAddr("compiledModuleLocation",	getCompiledModuleLocation()));
         ref.add(new StringRefAddr("queryExecuteTime",Long.toString(queryExecuteTime_)));
         ref.add(new StringRefAddr("T2QueryExecuteLogFile",T2QueryExecuteLogFile_));
 

@@ -436,7 +436,8 @@ static NAString *removeConsecutiveQuotes(const NAWchar *s,
   if (literalPrefixCS != CharInfo::UnknownCharSet) // the TOK_SBYTE_LITERAL case
   {
     targetCS = literalPrefixCS;
-    PARSERASSERT(targetCS == CharInfo::ISO88591 || targetCS == CharInfo::UTF8);
+    PARSERASSERT(targetCS == CharInfo::ISO88591 || targetCS == CharInfo::UTF8
+                 || targetCS == CharInfo::BINARY);
     //
     // Note that an _ISO88591'string-literal' may contain Western European characters
     // (i.e., 0 <= code_points < 255).
@@ -569,13 +570,15 @@ Int32 yyULexer::setStringval(Int32 tokCod, const char *dbgstr, YYSTYPE *lvalp)
     (YYText(),YYLeng(),targetMBCS,PARSERHEAP());
 
   if (
-      (tokCod == DELIMITED_IDENTIFIER || tokCod == IDENTIFIER)
+      (tokCod == DELIMITED_IDENTIFIER || tokCod == IDENTIFIER ||
+       tokCod == BACKQUOTED_IDENTIFIER)
       && targetMBCS != CharInfo::ISO88591
       )
   {
     NAString* tempstr = lvalp->stringval; // targetMBCS == ParScannedInputCharset
     if (tempstr == NULL)
       return invalidStrLitNonTranslatableChars(lvalp);
+
     Int32 TSLen = (Int32)tempstr->length();
     Int32 YYLen = (Int32)YYLeng();
     if(TSLen != YYLen){  // need offset of ORIGINAL string
@@ -1093,6 +1096,8 @@ Int32 yyULexer::yylex(YYSTYPE *lvalp)
               cs = CharInfo::getCharSetEnum(csName);
               if (CharInfo::isCharSetFullySupported(cs))
                 {
+                  if (cs == CharInfo::BINARY)
+                    isHexStringLiteral = TRUE;
                   return constructStringLiteralWithCharSet(isHexStringLiteral, cs, lvalp, quote);
                 } 
               else if (cs != CharInfo::UnknownCharSet)
@@ -2031,6 +2036,27 @@ Int32 yyULexer::yylex(YYSTYPE *lvalp)
                   }
             }
           return prematureEOF(lvalp);
+        case L'`':
+          // "delimited identifier" enclosed within backquotes (`)
+          //
+          advance();
+          while ((cc=peekAdvance()) != WEOF)
+            {
+              if (cc == L'`')
+                if ((cc= peekChar()) == L'`')
+                  advance();
+                else
+                  {
+                    doBeforeAction();
+                      // In Trafodion text, double quoted strings are
+                      // delimited identifiers.
+                      //
+                      return setStringval(BACKQUOTED_IDENTIFIER, 
+                                          DBGMSG("Backquoted identifier %s\n"),
+                                          lvalp);
+                  }
+            }
+          return prematureEOF(lvalp);
         case L'.':
           advance();
           if (U_isdigit(cc=peekChar()))
@@ -2811,6 +2837,7 @@ Int32 yyULexer::yylex(YYSTYPE *lvalp)
 	  if ( cc == L'\'' ){
 	      return constructStringLiteralWithCharSet(TRUE, 
 						       SqlParser_DEFAULT_CHARSET,
+                                                       //CharInfo::BINARY,
 						       lvalp,
 						       L'\'');
 	  }
@@ -2911,6 +2938,18 @@ Int32 yyULexer::yylex(YYSTYPE *lvalp)
                           // retract to end of kwd1.
                           retractToMark(end1);
                           return anSQLMXKeyword(keyWordEntry1->getTokenCode(), lvalp);
+                        case TOK_LIBRARY:
+                          *end1 = holdChar1;
+                           doBeforeAction();
+                           return aCompoundKeyword(TOK_FOR_LIBRARY, lvalp);
+                        case TOK_ROLE:
+                          *end1 = holdChar1;
+                           doBeforeAction();
+                           return aCompoundKeyword(TOK_FOR_ROLE, lvalp);
+                        case TOK_USER:
+                          *end1 = holdChar1;
+                           doBeforeAction();
+                           return aCompoundKeyword(TOK_FOR_USER, lvalp);
 			case TOK_MAXRUNTIME:
                         case TOK_REPEATABLE:
                         case TOK_SERIALIZABLE:
@@ -3083,6 +3122,12 @@ Int32 yyULexer::yylex(YYSTYPE *lvalp)
                         return eitherCompoundOrSimpleKeyword
                           ( keyWordEntry2->getTokenCode() == TOK_SEQUENCE,
                             TOK_SHOWDDL_SEQUENCE,
+                            keyWordEntry1->getTokenCode(),
+                            end1, holdChar1, lvalp);
+                      else if (keyWordEntry2->getTokenCode() == TOK_USER)
+                        return eitherCompoundOrSimpleKeyword
+                          ( keyWordEntry2->getTokenCode() == TOK_USER,
+                            TOK_SHOWDDL_USER,
                             keyWordEntry1->getTokenCode(),
                             end1, holdChar1, lvalp);
                       break;

@@ -50,7 +50,6 @@ class HdfsClient;
 // Classes referenced in this file
 // -----------------------------------------------------------------------
 class ex_tcb;
-class ExHdfsScanStats;
 class SequenceFileReader;
 class ExpORCinterface;
 
@@ -177,7 +176,6 @@ public:
 
   void freeResources();
   virtual void registerSubtasks();  // register work procedures with scheduler
-  virtual Int32 fixup();
 
   virtual ExWorkProcRetcode work(); 
   
@@ -206,23 +204,13 @@ public:
 protected:
   enum {
     NOT_STARTED
-  , INIT_HDFS_CURSOR
-  , OPEN_HDFS_CURSOR
-  , CHECK_FOR_DATA_MOD
-  , CHECK_FOR_DATA_MOD_AND_DONE
   , ASSIGN_RANGES_AT_RUNTIME
   , GET_HDFS_DATA
-  , CLOSE_HDFS_CURSOR
   , PROCESS_HDFS_ROW
   , RETURN_ROW
-  , REPOS_HDFS_DATA
-  , CLOSE_FILE
-  , ERROR_CLOSE_FILE
-  , COLLECT_STATS
   , HANDLE_ERROR
   , HANDLE_EXCEPTION
   , DONE
-  , HANDLE_ERROR_WITH_CLOSE
   , HANDLE_ERROR_AND_DONE
   , SETUP_HDFS_SCAN
   , TRAF_HDFS_READ
@@ -291,7 +279,6 @@ protected:
   Int64 matchBrkPoint_;
   atp_struct     * workAtp_;
   Int64 bytesLeft_;
-  hdfsFile hfdsFileHandle_;
   char * hdfsScanBuffer_;
   char * hdfsBufNextRow_;
 
@@ -318,9 +305,7 @@ protected:
 
   sql_buffer_pool * pool_;            // row images after selection pred,
                                       // with only the required columns. 
-  hdfsFile hdfsFp_;
 
-  ExLobGlobals *lobGlob_;
 
   Int64 requestTag_;
   Int64 hdfsScanBufMaxSize_;
@@ -354,7 +339,6 @@ protected:
   ComCondition * lastErrorCnd_;
   NABoolean checkRangeDelimiter_;
 
-  NABoolean dataModCheckDone_;
   ComDiagsArea * loggingErrorDiags_;
 
   // this array is populated from the info list stored as Queue.
@@ -363,7 +347,6 @@ protected:
   HdfsClient *logFileHdfsClient_;
   HdfsClient *hdfsClient_;
   HdfsScan *hdfsScan_;
-  NABoolean useLibhdfsScan_;
   BYTE *hdfsScanBufBacking_[2];
   HDFS_SCAN_BUF hdfsScanBuf_[2];
   int retArray_[4];
@@ -407,7 +390,6 @@ protected:
   , DONE
   } step_;
 
- virtual Int32 fixup();
   /////////////////////////////////////////////////////
   // Private methods.
   /////////////////////////////////////////////////////

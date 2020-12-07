@@ -34,7 +34,7 @@ using std::ofstream;
 #include "ExpLOBinterface.h"
 #include "ex_globals.h"
 
-Lng32 ExpLOBinterfaceInit(ExLobGlobals *& exLobGlob, NAHeap * parentHeap,
+Lng32 ExpLOBinterfaceInit(ExLobGlobals *& exLobGlob, NAHeap *lobHeap,
                           ContextCli *currContext,NABoolean isHiveRead,
                           char *hdfsServer, 
                           Int32 port)
@@ -46,13 +46,12 @@ Lng32 ExpLOBinterfaceInit(ExLobGlobals *& exLobGlob, NAHeap * parentHeap,
   Ex_Lob_Error status;
   Int32 dummyParam2 = 0;
 
-  NAHeap *lobHeap = new ((NAHeap *)parentHeap) NAHeap("LOB Heap", (NAHeap *)parentHeap);
- 
   err = ExLobsOper((char*)"dummy",
+                   NULL, 
 		   NULL, 0,
 		   NULL, 0, 
 		   NULL, dummyParam2, 0, dummyParam, 
-                   dummyParam, 0, dummyParam, status, cliError,
+                   dummyParam, dummyParam, dummyParam, status, cliError,
 		   NULL, Lob_HDFS_File,
 		   NULL, 0, 
 		   0,NULL,
@@ -65,16 +64,17 @@ Lng32 ExpLOBinterfaceInit(ExLobGlobals *& exLobGlob, NAHeap * parentHeap,
 		   0);
   if (exLobGlob)
     {
-    
-      if (isHiveRead)
+      if (exLobGlob->useLibHdfs_) 
+      {
+        if (isHiveRead)
         {
           ((ExLobGlobals *)exLobGlob)->startWorkerThreads();
           lobHeap->setThreadSafe();
         }
-      
-      
+      }
     }
-
+  if (exLobGlob->useLibHdfs_)
+  {
   //set hdfsConnection from context global 
   ContextCli *localContext = (ContextCli *)currContext;
   if (localContext)
@@ -89,7 +89,8 @@ Lng32 ExpLOBinterfaceInit(ExLobGlobals *& exLobGlob, NAHeap * parentHeap,
           ((ExLobGlobals *)exLobGlob)->setHdfsFs(fs);
         }
     }
-
+  }
+ 
   if (err != LOB_OPER_OK)
     return err;
   else
@@ -104,10 +105,11 @@ Lng32 ExpLOBinterfacePerformGC(ExLobGlobals *& exLobGlob, char *lobName,void *de
   Int64 cliError = -1; 
   Int32 dummyParam2 = 0;
   err = ExLobsOper(lobName,
+                   NULL, // ExHdfsScanStats * 
 		   NULL, 0,
 		   hdfsServer, hdfsPort, 
 		   NULL, dummyParam2, 0, dummyParam, 
-                   dummyParam, 0, dummyParam, status, cliError,
+                   dummyParam, dummyParam, dummyParam, status, cliError,
 		   lobLoc, Lob_HDFS_File,
                    (char *)descChunksArray, numEntries, 		  
 		   0,NULL,
@@ -132,10 +134,11 @@ Lng32 ExpLOBinterfaceRestoreLobDataFile(ExLobGlobals *& exLobGlob, char *hdfsSer
   Int64 cliError = -1; 
   Int32 dummyParam2 = 0;
   err = ExLobsOper(lobName,
+                   NULL, // ExHdfsScanStats * 
 		   NULL, 0,
 		   hdfsServer, hdfsPort, 
 		   NULL, dummyParam2, 0, dummyParam, 
-                   dummyParam, 0, dummyParam, status, cliError,
+                   dummyParam, dummyParam, dummyParam, status, cliError,
 		   lobLoc, Lob_HDFS_File,
 		   NULL, 0,
 		   0,NULL,
@@ -159,10 +162,11 @@ Lng32 ExpLOBinterfacePurgeBackupLobDataFile(ExLobGlobals *& exLobGlob, char *hdf
   Int64 cliError = -1; 
   Int32 dummyParam2 = 0;
   err = ExLobsOper(lobName,
+                   NULL, // ExHdfsScanStats * 
 		   NULL, 0,
 		   hdfsServer, hdfsPort, 
 		   NULL, dummyParam2, 0, dummyParam, 
-                   dummyParam, 0, dummyParam, status, cliError,
+                   dummyParam, dummyParam, dummyParam, status, cliError,
 		   lobLoc, Lob_HDFS_File,
 		   NULL, 0, 
 		   0,NULL,
@@ -186,10 +190,11 @@ Lng32 ExpLOBinterfaceCleanup(ExLobGlobals *& exLobGlob)
   Int64 cliError = -1; 
   Int32 dummyParam2 = 0;
   err = ExLobsOper((char *)"dummy",
+                   NULL, // ExHdfsScanStats * 
 		   NULL, 0,
 		   NULL, 0, 
 		   NULL, dummyParam2, 0, dummyParam, 
-                   dummyParam, 0, dummyParam, status, cliError,
+                   dummyParam, dummyParam, dummyParam, status, cliError,
 		   NULL, Lob_HDFS_File,
 		   NULL, 0, 
 		   0,NULL,
@@ -224,10 +229,11 @@ Lng32 ExpLOBinterfaceCreate(
   Int64 cliError = -1;
   
   err = ExLobsOper(lobName,
+                   NULL, // ExHdfsScanStats * 
 		   NULL, 0, 
 		   lobHdfsServer, lobHdfsPort,
 		   NULL, dummyParam2, 0, dummyParam, 
-                   dummyParam, 0, dummyParam, status, cliError, 
+                   dummyParam, dummyParam, dummyParam, status, cliError, 
 		   lobLoc, (LobsStorage)lobType, //Lob_HDFS_File,
 		   NULL, 0,
 		   0,NULL,
@@ -248,76 +254,6 @@ Lng32 ExpLOBinterfaceCreate(
     return 0;
 }
 
-// Return: 1, if check fails. 
-//         0, if check passes. 
-//         -LOB_*_ERROR, if error.
-
-
-Lng32 ExpLOBinterfaceDataModCheck(ExLobGlobals * exLobGlob,
-                                  char * dirPath,
-                                  char * lobHdfsServer,
-                                  Lng32  lobHdfsPort,
-                                  Int64  modTS,
-                                  Lng32  numOfPartLevels,
-                                  Int64 &failedModTS,
-                                  char * failedLocBuf, // OUT: path/name
-                                  Int32 &failedLocBufLen) // INOUT: buflen
-{
-  Ex_Lob_Error err;
-
-  Int64 dummyParam=0;
-  Int32 dummyParam2 = 0;
-  Ex_Lob_Error status;
-  Int64 cliError = -1;
-
-  Lng32 blackBoxLen = 
-    sizeof(modTS) + sizeof(numOfPartLevels) 
-    + sizeof(failedLocBufLen) + failedLocBufLen;
-  char blackBox[blackBoxLen];
-  *(Int64*)blackBox = modTS;
-  *(Lng32*)&blackBox[sizeof(modTS)] = numOfPartLevels;
-  *(Lng32*)&blackBox[sizeof(modTS)+sizeof(numOfPartLevels)] = failedLocBufLen;
-  failedModTS = -1;
-  err = ExLobsOper((char*)"",
-                   NULL, 0,
-                   lobHdfsServer, lobHdfsPort,
-                   NULL, dummyParam2, 
-                   0, failedModTS,
-                   dummyParam, 
-                   0, dummyParam,
-                   status, cliError,
-                   dirPath, (LobsStorage)Lob_HDFS_File,
-                   NULL, 0,
-		   0,NULL,
-                   Lob_Data_Mod_Check,
-                   Lob_None,
-                   1, // waited op
-                   exLobGlob,
-                   0, 
-                   blackBox, blackBoxLen
-                   );
-  if (err == LOB_DATA_MOD_CHECK_ERROR)
-    {
-      failedLocBufLen = 
-        *(Lng32*)&blackBox[sizeof(modTS)+sizeof(numOfPartLevels)];
-
-      if (failedLocBufLen > 0)
-        {
-          str_cpy_and_null(failedLocBuf, 
-                           &blackBox[sizeof(modTS)+sizeof(numOfPartLevels)+sizeof(failedLocBufLen)], 
-                           failedLocBufLen, '\0', ' ', TRUE);
-        }
-
-      return 1;
-    }
-  else if (err != LOB_OPER_OK) {
-    failedLocBuf[0] = '\0';
-    failedLocBufLen = 0;
-    return -err;
-  }
-  else
-    return 0;
-}
 
 Lng32 ExpLOBinterfaceEmptyDirectory(
                             ExLobGlobals * exLobGlob,
@@ -338,10 +274,11 @@ Lng32 ExpLOBinterfaceEmptyDirectory(
   Int64 cliError = -1;
 
   err = ExLobsOper(lobName,
+                   NULL, // ExHdfsScanStats * 
                    NULL, 0,
                    lobHdfsServer, lobHdfsPort,
                    NULL, dummyParam2, 0, dummyParam,
-                   dummyParam, 0, dummyParam, status, cliError,
+                   dummyParam, dummyParam, dummyParam, status, cliError,
                    lobLoc, (LobsStorage)lobType, //Lob_HDFS_File,
                    NULL, 0,
 		   0,NULL,
@@ -371,10 +308,11 @@ Lng32 ExpLOBinterfaceDrop(ExLobGlobals * exLobGlob,  char * lobHdfsServer ,
   Int64 cliError = -1;
   
   err = ExLobsOper(lobName,
+                   NULL, // ExHdfsScanStats * 
 		   NULL, 0,
 		   lobHdfsServer, lobHdfsPort, 
 		   NULL, dummyParam2, 0, dummyParam, 
-                   dummyParam, 0, dummyParam, status, cliError,
+                   dummyParam, dummyParam, dummyParam, status, cliError,
 		   lobLoc, Lob_HDFS_File,
 		   NULL, 0,
 		   0,NULL,
@@ -403,10 +341,11 @@ Lng32 ExpLOBInterfacePurgedata(ExLobGlobals * exLobGlob,
   
   
   err = ExLobsOper(lobName, 
+                   NULL, // ExHdfsScanStats * 
 		   NULL,0, 
 		   NULL, 0,
 		   NULL, dummyParam2, 0, dummyParam, 
-                   dummyParam, 0, dummyParam, status, cliError,
+                   dummyParam, dummyParam, dummyParam, status, cliError,
 		   lobLoc, Lob_HDFS_File,
 		   NULL, 0,
 		   0,NULL,
@@ -424,6 +363,7 @@ Lng32 ExpLOBInterfacePurgedata(ExLobGlobals * exLobGlob,
 }
 
 Lng32 ExpLOBinterfaceCloseFile(ExLobGlobals * exLobGlob, 
+                               ExHdfsScanStats *hdfsAccessStats,
 			       char * lobName,
 			       char * lobLoc,
 			       Lng32 lobType,
@@ -440,10 +380,11 @@ Lng32 ExpLOBinterfaceCloseFile(ExLobGlobals * exLobGlob,
   LobsStorage ls = (LobsStorage)lobType;
 
   err = ExLobsOper(lobName, 
+                   hdfsAccessStats,
 		   NULL, 0, 
 		   lobHdfsServer, lobHdfsPort,
 		   NULL, dummyParam2, 0, dummyParam, 
-                   dummyParam, 0, dummyParam, status, cliError,
+                   dummyParam, dummyParam, dummyParam, status, cliError,
 		   lobLoc, ls, //Lob_HDFS_File,
 		   NULL, 0,
 		   0,NULL,
@@ -463,6 +404,7 @@ Lng32 ExpLOBinterfaceCloseFile(ExLobGlobals * exLobGlob,
 
 
 Lng32 ExpLOBInterfaceInsert(ExLobGlobals * exLobGlob, 
+                            ExHdfsScanStats *hdfsAccessStats,
 			    char * tgtLobName,
 			    char * lobStorageLocation,
 			    Lng32 lobType,
@@ -477,7 +419,7 @@ Lng32 ExpLOBInterfaceInsert(ExLobGlobals * exLobGlob,
 			    Int64 blackBoxLen,
 			    char * blackBox,
 
-			    Int64 &requestTag,
+			    Int64 &lobHdfsDataOffset,
 			    Int64 xnId,
 			    Int64 &descSyskey,
 			    LobsOper lo,
@@ -506,24 +448,20 @@ Lng32 ExpLOBInterfaceInsert(ExLobGlobals * exLobGlob,
   Int64 outDescSyskey  = -1;
   if (srcLobData)
     inDescSyskey = descSyskey;
- 
- 
-  if (( lo == Lob_InsertDataSimple) || 
-      ( lo == Lob_InsertDesc) || 
-      (lo == Lob_InsertData))
-    requestTag = -1;
+  Int64 retOperLen = 0;
       
 
   LobsStorage ls = (LobsStorage)lobType;
 
-  //  Int64 lobLen = (tgtLobLen ? *tgtLobLen : 0);
-  err = ExLobsOper(tgtLobName, 
+  
+    err = ExLobsOper(tgtLobName, 
+                   hdfsAccessStats,
 		   lobHandle, handleLen, 
 		   lobHdfsServer, lobHdfsPort,
 		   outLobHandle, *outHandleLen,
-		   inDescSyskey, outDescSyskey, // for flat files 
-		   dummyParam, //lobLen,
-		   requestTag, requestTag,
+		   inDescSyskey, outDescSyskey, 
+		   retOperLen,
+		   lobHdfsDataOffset, dummyParam,
                    status, ce,
 		   lobStorageLocation, ls, //Lob_HDFS_File,
 		   srcLobData, srcLobLen, //strlen(srcLobData),
@@ -560,6 +498,7 @@ Lng32 ExpLOBInterfaceInsert(ExLobGlobals * exLobGlob,
 }
 
 Lng32 ExpLOBInterfaceInsertSelect(ExLobGlobals * exLobGlob, 
+                                  ExHdfsScanStats *hdfsAccessStats,
 				  char * lobHdfsServer ,
 				  Lng32 lobHdfsPort ,
 				  char * tgtLobName,
@@ -594,6 +533,7 @@ Lng32 ExpLOBInterfaceInsertSelect(ExLobGlobals * exLobGlob,
   LobsStorage ls = (LobsStorage)lobType;
  
   err = ExLobsOper(tgtLobName, 
+                   hdfsAccessStats,
 		   lobHandle, handleLen, 
 		   lobHdfsServer, lobHdfsPort,
                    outLobHandle, *outHandleLen,
@@ -627,6 +567,7 @@ Lng32 ExpLOBInterfaceInsertSelect(ExLobGlobals * exLobGlob,
 }
 
 Lng32 ExpLOBInterfaceUpdateAppend(ExLobGlobals * exLobGlob, 
+                                  ExHdfsScanStats *hdfsAccessStats,
 				  char * lobHdfsServer ,
 				  Lng32 lobHdfsPort ,
 				  char * tgtLobName,
@@ -640,7 +581,6 @@ Lng32 ExpLOBInterfaceUpdateAppend(ExLobGlobals * exLobGlob,
 				  Lng32 checkStatus,
 				  Lng32 waitedOp,
 				  LobsSubOper so,
-				  
 				  Int64 &tgtDescSyskey,
 				  Int64 tgtLobLen,
 				  char * srcLobData, 
@@ -667,11 +607,12 @@ Lng32 ExpLOBInterfaceUpdateAppend(ExLobGlobals * exLobGlob,
   else if ((so == Lob_Buffer) || (so == Lob_Memory))
     srcLen = tgtLobLen;
   err = ExLobsOper(tgtLobName, 
+                   hdfsAccessStats,
                    lobHandle, handleLen, 
 		   lobHdfsServer, lobHdfsPort, // hdfs server/port
                    outLobHandle, *outHandleLen,
 		   tgtDescSyskey, dummyParam, operLen,
-                   0, dummyParam, status, cliError,
+                   dummyParam, dummyParam, status, cliError,
                    lobStorageLocation, Lob_HDFS_File,
                    srcLobData, srcLen, //strlen(srcLobData),
 		   0,NULL,
@@ -697,9 +638,9 @@ Lng32 ExpLOBInterfaceUpdateAppend(ExLobGlobals * exLobGlob,
 }
 
 Lng32 ExpLOBInterfaceUpdate(ExLobGlobals * exLobGlob, 
+                            ExHdfsScanStats *hdfsAccessStats,
 			    char * lobHdfsServer ,
 			    Lng32 lobHdfsPort,
-
 			    char * tgtLobName,
 			    char * lobStorageLocation,
 			    Lng32 handleLen,
@@ -711,7 +652,6 @@ Lng32 ExpLOBInterfaceUpdate(ExLobGlobals * exLobGlob,
 			    Lng32 checkStatus,
 			    Lng32 waitedOp,
 			    LobsSubOper so,
-			    
 			    Int64 &tgtDescSyskey,
 			    Int64 tgtLobLen,
 			    char * srcLobData, 
@@ -738,11 +678,12 @@ Lng32 ExpLOBInterfaceUpdate(ExLobGlobals * exLobGlob,
     sourceLen = tgtLobLen;
 
   err = ExLobsOper(tgtLobName, 
+                   hdfsAccessStats,
                    lobHandle, handleLen, 
 		   lobHdfsServer, lobHdfsPort, // hdfs server/port
                    outLobHandle, *outHandleLen,
 		   tgtDescSyskey, dummyParam, operLen,
-                   0, dummyParam, status, cliError,
+                   dummyParam, dummyParam, status, cliError,
                    lobStorageLocation, Lob_HDFS_File,
                    srcLobData, sourceLen, 
 		   0,NULL,
@@ -770,10 +711,11 @@ Lng32 ExpLOBInterfaceUpdate(ExLobGlobals * exLobGlob,
 }
 
 Lng32 ExpLOBInterfaceDelete(ExLobGlobals * exLobGlob, 
+                            ExHdfsScanStats *hdfsAccessStats,
 			    char * lobHdfsServer ,
 			    Lng32 lobHdfsPort ,
 			    char * lobName,
-		    char * lobLoc,
+		            char * lobLoc,
 			    Lng32 handleLen,
 			    char * lobHandle,
 			    Int64 &requestTag,
@@ -799,6 +741,7 @@ Lng32 ExpLOBInterfaceDelete(ExLobGlobals * exLobGlob,
     }
 
   err = ExLobsOper(lobName, 
+                   hdfsAccessStats,
 		   lobHandle, handleLen, 
 		   lobHdfsServer, lobHdfsPort, // hdfs server/port
                    NULL, dummyParam2, 
@@ -829,12 +772,12 @@ Lng32 ExpLOBInterfaceDelete(ExLobGlobals * exLobGlob,
 }
 
 Lng32 ExpLOBInterfaceSelect(ExLobGlobals * exLobGlob, 
+                            ExHdfsScanStats *hdfsAccessStats,
 			    char * lobName, 
 			    char * lobLoc,
 			    Lng32 lobType,
 			    char * lobHdfsServer,
 			    Lng32 lobHdfsPort,
-                          
 			    Lng32 handleLen,
 			    char * lobHandle,
 			    Int64 &requestTag,
@@ -871,6 +814,7 @@ Lng32 ExpLOBInterfaceSelect(ExLobGlobals * exLobGlob,
   LobsStorage ls = (LobsStorage)lobType;
 
   err = ExLobsOper(lobName, 
+                   hdfsAccessStats,
 		   lobHandle, handleLen, 
 		   lobHdfsServer, lobHdfsPort,
                    NULL, dummyParam2, 
@@ -906,6 +850,7 @@ Lng32 ExpLOBInterfaceSelect(ExLobGlobals * exLobGlob,
 }
 
 Lng32 ExpLOBInterfaceSelectCursor(ExLobGlobals * exLobGlob, 
+                                  ExHdfsScanStats *hdfsAccessStats,
 				  char * lobName, 
 				  char * lobLoc,
 				  Lng32 lobType,
@@ -971,6 +916,7 @@ Lng32 ExpLOBInterfaceSelectCursor(ExLobGlobals * exLobGlob,
   LobsStorage ls = (LobsStorage)lobType;
 
   err = ExLobsOper(lobName, 
+                   hdfsAccessStats,
 		   lobHandle, handleLen, 
 		   lobHdfsServer, lobHdfsPort,
                    NULL, dummyParam2, 
@@ -997,19 +943,64 @@ Lng32 ExpLOBInterfaceSelectCursor(ExLobGlobals * exLobGlob,
   
   return LOB_ACCESS_SUCCESS;
 }
-
-
-Lng32 ExpLOBInterfaceGetLobLength(ExLobGlobals * exLobGlob, 
-				  char * lobName, 
-				  char * lobLoc,
-				  Lng32 lobType,
-				  char * lobHdfsServer,
-				  Lng32 lobHdfsPort,
-				  Int32 handleLen, 
-				  char * lobHandle,
-			          Int64 &outLobLen
+Lng32 ExpLOBInterfaceGetFileSize(ExLobGlobals * exLobGlob, 
+                                 char * filename, 
+                                 char * lobHdfsServer,
+                                 Lng32 lobHdfsPort,
+                                 Int64 &outFileSize
                                  
 				  )
+{
+  Ex_Lob_Error err;
+  
+  Int64 dummyParam = 0;
+  Int32 dummyParam2 = 0;
+  Ex_Lob_Error status;
+  Int64 cliError=0;
+  
+  LobsOper lo;
+  LobsSubOper so;
+ 
+ 
+  so = Lob_Buffer;
+   err = ExLobsOper(filename, 
+                   NULL, // ExHdfsScanStats * 
+		   NULL, 0, 
+		   lobHdfsServer, lobHdfsPort,
+                   NULL, dummyParam2, 
+		   dummyParam, dummyParam, 
+		   outFileSize,
+                   dummyParam, dummyParam,
+		   status, cliError, 
+		   NULL, Lob_HDFS_File,
+		   NULL, 0, 
+		   dummyParam,NULL,
+		   Lob_GetFileSize,
+		   so,
+                   TRUE,
+		   exLobGlob,
+		   0,
+		   0, 0,0,0,0,0,0,0,
+                   0
+		   );
+
+  if (err != LOB_OPER_OK)
+    {
+      return -err;
+    }
+  
+  return LOB_ACCESS_SUCCESS;
+}
+Lng32 ExpLOBInterfaceGetLobLength(ExLobGlobals * exLobGlob, 
+                               char * lobName, 
+                               char * lobLoc,
+                               Lng32 lobType,
+                               char * lobHdfsServer,
+                               Lng32 lobHdfsPort,                              
+                               Int32 handleLen,
+                               char *lobHandle,
+                               Int64 &outLobLen)
+				  
 {
   Ex_Lob_Error err;
   
@@ -1025,7 +1016,8 @@ Lng32 ExpLOBInterfaceGetLobLength(ExLobGlobals * exLobGlob,
     so = Lob_External_File;
   else 
     so = Lob_Buffer;
-  err = ExLobsOper(lobName, 
+   err = ExLobsOper(lobName, 
+                   NULL, // ExHdfsScanStats * 
 		   lobHandle, handleLen, 
 		   lobHdfsServer, lobHdfsPort,
                    NULL, dummyParam2, 
@@ -1042,6 +1034,54 @@ Lng32 ExpLOBInterfaceGetLobLength(ExLobGlobals * exLobGlob,
 		   exLobGlob,
 		   0,
 		   0, 0,0,0,0,0,0,0,
+                   0
+		   );
+
+  if (err != LOB_OPER_OK)
+    {
+      return -err;
+    }
+  
+  return LOB_ACCESS_SUCCESS;
+}
+
+Lng32 ExpLOBInterfaceReadSourceFile(ExLobGlobals * exLobGlob, 
+                                    char * filename, 
+                                    char * lobHdfsServer,
+                                    Lng32 lobHdfsPort,
+                                    Int64  readOffset, 
+                                    Int64  allocMemSize,
+                                    char *&retBuf,
+                                    Int64 &retReadLen
+                                    )
+{
+  Ex_Lob_Error err;
+  
+  Int64 dummyParam = 0;
+  Int32 dummyParam2 = 0;
+  Ex_Lob_Error status;
+  Int64 cliError=0;
+  
+  LobsOper lo;
+  LobsSubOper so= Lob_Buffer;
+   err = ExLobsOper(filename, 
+                   NULL, // ExHdfsScanStats * 
+		   NULL, 0, 
+		   lobHdfsServer, lobHdfsPort,
+                   NULL, dummyParam2, 
+		   readOffset, allocMemSize, 
+		   retReadLen,
+                    dummyParam, (Int64 &)retBuf,
+		   status, cliError, 
+		   NULL, Lob_HDFS_File,
+		   NULL, dummyParam, 
+		   dummyParam,NULL,
+		   Lob_ReadSourceFile,
+		   so,
+                   TRUE,
+		   exLobGlob,
+		   0,
+		   0,0,0,0,0,0,0,0,
                    0
 		   );
 
@@ -1084,6 +1124,7 @@ Lng32 ExpLOBInterfaceGetOffset(ExLobGlobals * exLobGlob,
   else 
     so = Lob_Buffer;
   err = ExLobsOper(lobName, 
+                   NULL, // ExHdfsScanStats * 
 		   lobHandle, handleLen, 
 		   lobHdfsServer, lobHdfsPort,
                    NULL, dummyParam2, 
@@ -1139,6 +1180,7 @@ Lng32 ExpLOBInterfaceGetFileName(ExLobGlobals * exLobGlob,
   else 
     so = Lob_Buffer;
   err = ExLobsOper(lobName, 
+                   NULL, // ExHdfsScanStats * 
 		   lobHandle, handleLen, 
 		   lobHdfsServer, lobHdfsPort,
                    NULL, dummyParam2, 
@@ -1165,41 +1207,6 @@ Lng32 ExpLOBInterfaceGetFileName(ExLobGlobals * exLobGlob,
     }
   
   return LOB_ACCESS_SUCCESS;
-}
-Lng32 ExpLOBinterfaceStats(
-			    ExLobGlobals * exLobGlob, 
-			    ExLobStats * lobStats,
-			    char * lobName, char * lobLoc,
-			    Lng32 lobType,
-			    char * lobHdfsServer,
-			    Lng32 lobHdfsPort)
-{
-  Ex_Lob_Error err;
-
-  Int64 dummyParam= 0;
-  Int32 dummyParam2 = 0;
-  Ex_Lob_Error status;
-  Int64 cliError = -1;
-  
-  err = ExLobsOper(lobName,
-		   NULL, 0, 
-		   lobHdfsServer, lobHdfsPort,
-		   NULL, dummyParam2, 0, dummyParam, 
-                   dummyParam, 0, dummyParam, status, cliError, 
-		   lobLoc, (LobsStorage)lobType, 
-		   (char*)lobStats, 0,
-		   0,NULL,
-		   Lob_Stats,
-		   Lob_None,
-                   1, // waited op
-		   exLobGlob,
-		   0, NULL, 0
-		   );
-
-  if (err != LOB_OPER_OK)
-    return -err;
-  else
-    return 0;
 }
  
 char * getLobErrStr(Lng32 errEnum)

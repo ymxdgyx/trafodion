@@ -31,122 +31,27 @@ import java.sql.*;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.IOException;
-//import com.tandem.tmf.Current;	// Linux port - ToDo
 import java.util.Date;
 import java.io.PrintWriter;
 
 public abstract class SQLMXLob
 {
-	// public methods
+        long inLength() throws SQLException 
+        {
+		if (b_ != null && length_ == 0)
+			return b_.length;
+		else
+			return length_;
+        }
+
 	public long length() throws SQLException
 	{
-		if (JdbcDebugCfg.entryActive) debug[methodId_length].methodEntry();
-		try
-		{
-			long length = 0;
-
-			checkIfCurrent();
-			prepareGetLobLenStmt();
-			PreparedStatement GetLobLenStmt = getGetLobLenStmt();
-
-			if ((traceWriter_ != null) &&
-				((traceFlag_ == T2Driver.LOB_LVL) || (traceFlag_ == T2Driver.ENTRY_LVL)))
-			{
-				traceWriter_.println(getTraceId()
-					+ "length() - GetLobLenStmt params: tableName_=" + tableName_
-					+ " dataLocator_=" + dataLocator_);
-			}
-
-			synchronized (GetLobLenStmt)
-			{
-				GetLobLenStmt.setString(1, tableName_);
-				GetLobLenStmt.setLong(2, dataLocator_);
-				ResultSet rs = GetLobLenStmt.executeQuery();
-				try
-				{
-					if (rs.next())
-						length = rs.getLong(1);
-				}
-				finally
-				{
-					rs.close();
-				}
-			}
-			return length;
-		}
-		finally
-		{
-			if (JdbcDebugCfg.entryActive) debug[methodId_length].methodExit();
-		}
+		throw new SQLFeatureNotSupportedException("Clob or Blob.length() is not supported");
 	}
 
 	public void truncate(long len) throws SQLException
 	{
-		if (JdbcDebugCfg.entryActive) debug[methodId_truncate].methodEntry();
-		try
-		{
-			int chunkNo;
-			int offset;
-			byte[] chunk;
-
-			if (len < 0)
-			{
-				Object[] messageArguments = new Object[1];
-				messageArguments[0] = "SQLMXLob.truncate(long)";
-				throw Messages.createSQLException(conn_.locale_,"invalid_input_value", messageArguments);
-			}
-			checkIfCurrent();
-			chunkNo = (int)(len / chunkSize_);
-			offset = (int)(len % chunkSize_);
-			prepareDelLobDataStmt();
-			PreparedStatement DelLobStmt = getDelLobDataStmt();
-
-			if ((traceWriter_ != null) &&
-				((traceFlag_ == T2Driver.LOB_LVL) || (traceFlag_ == T2Driver.ENTRY_LVL)))
-			{
-				traceWriter_.println(getTraceId()
-					+ "truncate(" + len + ") - DelLobStmt params: tableName_=" + tableName_
-					+ " dataLocator_=" + dataLocator_
-					+ " chunkNo+1=" + chunkNo+1);
-			}
-
-			synchronized (DelLobStmt)
-			{
-				DelLobStmt.setString(1, tableName_);
-				DelLobStmt.setLong(2, dataLocator_);
-				DelLobStmt.setInt(3, chunkNo+1);
-				DelLobStmt.setInt(4, Integer.MAX_VALUE);
-				DelLobStmt.executeUpdate();
-			}
-			if (offset != 0)
-			{
-				prepareTrunLobDataStmt();
-				PreparedStatement TrunLobStmt = getTrunLobDataStmt();
-
-				if ((traceWriter_ != null) &&
-					((traceFlag_ == T2Driver.LOB_LVL) || (traceFlag_ == T2Driver.ENTRY_LVL)))
-				{
-					traceWriter_.println(getTraceId()
-						+ "truncate(" + len + ") - TrunLobStmt params: offset=" + offset
-						+ " tableName_=" + tableName_
-						+ " dataLocator_=" + dataLocator_
-						+ " chunkNo=" + chunkNo);
-				}
-
-				synchronized (TrunLobStmt)
-				{
-					TrunLobStmt.setInt(1, offset);
-					TrunLobStmt.setString(2, tableName_);
-					TrunLobStmt.setLong(3, dataLocator_);
-					TrunLobStmt.setInt(4, chunkNo);
-					TrunLobStmt.executeUpdate();
-				}
-			}
-		}
-		finally
-		{
-			if (JdbcDebugCfg.entryActive) debug[methodId_truncate].methodExit();
-		}
+		throw new SQLFeatureNotSupportedException("Clob or Blob.truncate(long) is not supported");
 	}
 
 	InputStream getInputStream() throws SQLException
@@ -178,60 +83,21 @@ public abstract class SQLMXLob
 		}
 	}
 
-	OutputStream setOutputStream(long pos) throws SQLException
+	SQLMXLobOutputStream setOutputStream(long startingPos) throws SQLException
 	{
-		if (JdbcDebugCfg.entryActive) debug[methodId_setOutputStream].methodEntry();
-		try
-		{
-			if (outputStream_ != null)
-			{
-				try
-				{
-					outputStream_.close();
-				}
-				catch (IOException e)
-				{
-				}
-				finally
-				{
-					outputStream_ = null;
-				}
-			}
-			outputStream_ = new SQLMXLobOutputStream(conn_, this, pos);
-			return outputStream_;
-		}
-		finally
-		{
-			if (JdbcDebugCfg.entryActive) debug[methodId_setOutputStream].methodExit();
-		}
+		outputStream_ = new SQLMXLobOutputStream(conn_, startingPos, this);
+		return outputStream_;
 	}
 
 
-	void close()
+	void close() throws SQLException
 	{
-		if (JdbcDebugCfg.entryActive) debug[methodId_close].methodEntry();
-		try
-		{
+		try {
+			if (inputStream_ != null)
+				inputStream_.close();
 			isCurrent_ = false;
-			try
-			{
-				if (inputStream_ != null)
-					inputStream_.close();
-				if (outputStream_ != null)
-					outputStream_.close();
-			}
-			catch (IOException e)
-			{
-			}
-			finally
-			{
-				inputStream_ = null;
-				outputStream_ = null;
-			}
-		}
-		finally
-		{
-			if (JdbcDebugCfg.entryActive) debug[methodId_close].methodExit();
+		} catch (IOException ioe) {
+			throw new SQLException(ioe);
 		}
 	}
 
@@ -262,7 +128,7 @@ public abstract class SQLMXLob
 		}
 	}
 
-	void checkIfCurrent() throws SQLException
+        void checkIfCurrent() throws SQLException
 	{
 		if (JdbcDebugCfg.entryActive) debug[methodId_checkIfCurrent].methodEntry();
 		try
@@ -281,112 +147,28 @@ public abstract class SQLMXLob
 		}
 	}
 
-// *******************************************************************
-// * If Autocommit is enabled, and no external transaction exists, an
-// * exception will be thrown. In this case, JDBC cannot play the role of
-// * Autocommit (updating the base and lob tables in a single unit of work)
-// * because we return an OutputStream or Writer object to the application,
-// * who could hold it indefinitely. This is the case for
-// * Clob.setAsciiStream, Clob.setCharacterStream, and Blob.setBinaryStream.
-// *******************************************************************
-	void checkAutoCommitExtTxn() throws SQLException
+	void setLobLocator(String lobLocator)
 	{
-		if (JdbcDebugCfg.entryActive) debug[methodId_checkAutoCommitExtTxn].methodEntry();
-		try
-		{
-/* Linux port - ToDo com.tandem.util.FSException in tmf.jar
-			Current tx = null;
-			int txnState = -1;
-
-			try
-			{
-				tx = new Current();
-				txnState = tx.get_status();
-
-				if (conn_.autoCommit_ && (txnState == tx.StatusNoTransaction))
-				{
-					throw Messages.createSQLException(conn_.locale_,"invalid_lob_commit_state", null);
-				}
-			}
-			catch (com.tandem.util.FSException fe1)
-			{
-				Object[] messageArguments = new Object[2];
-				messageArguments[0] = Short.toString(fe1.error);
-				messageArguments[1] = fe1.getMessage();
-				throw Messages.createSQLException(conn_.locale_, "transaction_error_update",
-					messageArguments);
-			}
-*/
-		}
-		finally
-		{
-			if (JdbcDebugCfg.entryActive) debug[methodId_checkAutoCommitExtTxn].methodExit();
-		}
+		lobLocator_ = lobLocator;
 	}
 
-    // Declare the following abstract methods to resolve symbols
-	abstract void prepareGetLobLenStmt() throws SQLException;
-	abstract void prepareDelLobDataStmt()  throws SQLException;
-	abstract void prepareGetLobDataStmt() throws SQLException;
-	abstract void prepareUpdLobDataStmt() throws SQLException;
-	abstract void prepareInsLobDataStmt() throws SQLException;
-	abstract void prepareTrunLobDataStmt() throws SQLException;
-	abstract PreparedStatement getGetLobLenStmt();
-	abstract PreparedStatement getDelLobDataStmt();
-	abstract PreparedStatement getTrunLobDataStmt();
-	abstract PreparedStatement getInsLobDataStmt();
-	abstract PreparedStatement getUpdLobDataStmt();
-	abstract PreparedStatement getGetLobDataStmt();
-
-
-
-	// Constructors
-	SQLMXLob(SQLMXConnection connection, String tableName, long dataLocator, String lobTableName, boolean isBlob)
-		throws SQLException
+	SQLMXLob(SQLMXConnection connection, String lobLocator, boolean isBlob) throws SQLException
 	{
-		if (JdbcDebugCfg.entryActive) debug[methodId_SQLMXLob_LLJL].methodEntry();
-		try
-		{
-			conn_ = connection;
-			tableName_ = tableName;
-			isCurrent_ = true;
-			dataLocator_ = dataLocator;
-			if (lobTableName != null)
-			{
-				lobTableName_ = lobTableName;
-				SQLMXDataLocator tempLoc = (SQLMXDataLocator)SQLMXConnection.lobTableToDataLoc_.get(lobTableName);
-				if (tempLoc == null)
-				{
-					dataLocator = conn_.getDataLocator(lobTableName_, isBlob);
-				}
-				SQLMXDataLocator dataLoc = (SQLMXDataLocator)SQLMXConnection.lobTableToDataLoc_.get(lobTableName);
-				chunkSize_ = dataLoc.chunkSize_;
-			}
-
-
-		}
-		finally
-		{
-			if (JdbcDebugCfg.entryActive) debug[methodId_SQLMXLob_LLJL].methodExit();
-		}
+		lobLocator_ = lobLocator;
+		conn_ = connection;
+		isBlob_ = isBlob;
+		chunkSize_ = 16*1024;
+		isCurrent_ = true;
 	}
 
-	SQLMXLob(SQLMXConnection connection, String tableName, long dataLocator, InputStream x,
-		int length, String lobTableName, boolean isBlob) throws SQLException
+	SQLMXLob(SQLMXConnection connection, String lobLocator, InputStream x, long length, boolean isBlob) throws SQLException
 	{
-		this(connection, tableName, dataLocator, lobTableName, isBlob);
-
-		if (JdbcDebugCfg.entryActive) debug[methodId_SQLMXLob_LLJLIL].methodEntry();
-		try
-		{
-			is_ = x;
-			isLength_ = length;
-		}
-		finally
-		{
-			if (JdbcDebugCfg.entryActive) debug[methodId_SQLMXLob_LLJLIL].methodExit();
-		}
+		this(connection, lobLocator, isBlob);
+		is_ = x;
+		length_ = length;
+		isCurrent_ = true;
 	}
+
 	public void setTraceId(String traceId_) {
 		this.traceId_ = traceId_;
 	}
@@ -408,31 +190,32 @@ public abstract class SQLMXLob
 		return traceId_;
 	}
 	// fields
-	private String					traceId_;
+	private String			traceId_;
 	static PrintWriter		traceWriter_;
-	static int				traceFlag_;
+	static int			traceFlag_;
 	SQLMXConnection			conn_;
-	String					tableName_;
-	long					dataLocator_;
+	String				lobLocator_;
 	SQLMXLobInputStream		inputStream_;
-	SQLMXLobOutputStream	outputStream_;
-	boolean					isCurrent_;
-	InputStream				is_;
-	int						isLength_;
-	String					lobTableName_;
-	int						chunkSize_;
+	SQLMXLobOutputStream		outputStream_;
+	boolean				isCurrent_;
+	InputStream			is_;
+	byte[]				b_;
+	long				length_;
+	int				offset_;
+	int				chunkSize_;
+	boolean				isBlob_;
 
-	private static int methodId_length					=  0;
+	
+	private static int methodId_length				=  0;
 	private static int methodId_truncate				=  1;
 	private static int methodId_getInputStream			=  2;
 	private static int methodId_setOutputStream			=  3;
-	private static int methodId_close					=  4;
-	private static int methodId_convSQLExceptionToIO	=  5;
+	private static int methodId_close				=  4;
+	private static int methodId_convSQLExceptionToIO		=  5;
 	private static int methodId_checkIfCurrent			=  6;
-	private static int methodId_checkAutoCommitExtTxn	=  7;
-	private static int methodId_SQLMXLob_LLJL			=  8;
-	private static int methodId_SQLMXLob_LLJLIL			=  9;
-	private static int totalMethodIds					= 10;
+	private static int methodId_SQLMXLob_LLJL			=  7;
+	private static int methodId_SQLMXLob_LLJLIL			=  8;
+	private static int totalMethodIds				=  9;
 	private static JdbcDebug[] debug;
 
 	static
@@ -448,7 +231,6 @@ public abstract class SQLMXLob
 			debug[methodId_close] = new JdbcDebug(className,"close");
 			debug[methodId_convSQLExceptionToIO] = new JdbcDebug(className,"convSQLExceptionToIO");
 			debug[methodId_checkIfCurrent] = new JdbcDebug(className,"checkIfCurrent");
-			debug[methodId_checkAutoCommitExtTxn] = new JdbcDebug(className,"checkAutoCommitExtTxn");
 			debug[methodId_SQLMXLob_LLJL] = new JdbcDebug(className,"SQLMXLob[LLJL]");
 			debug[methodId_SQLMXLob_LLJLIL] = new JdbcDebug(className,"SQLMXLob[LLJLIL]");
 		}

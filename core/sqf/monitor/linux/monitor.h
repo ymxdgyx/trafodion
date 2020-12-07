@@ -26,32 +26,27 @@
 #ifndef MONITOR_H_
 #define MONITOR_H_
 
-#include "tmsync.h"
+#include "msgdef.h"
+#include "cluster.h"
 #include "process.h"
 
 
-#define MAX_PROCESSES       2048
-#define MAX_IO_OUTSTANDING  MAX_PROCESSES*4
+#define MAX_PROCESSES            2048
+#define MAX_PORTFILEOPEN_RETRIES    60
+#define MAX_PORTFILEOPEN_DELAY       5   // seconds (5*60=300 = 5 min)
+#define MIN_PORTFILEOPEN_DELAY       1   // seconds (1*60=60  = 1 min)
+#define DEFAULT_PORTFILEOPEN_DELAY   2   // seconds (2*60=120 = 2 min)
 
 #define SUCCESS 0
 #define FAILURE 1
 
 
-enum OpType
+class CMonitor : public CCluster
 {
-    OpNull,
-    OpRecv,
-    OpSend
-#ifndef USE_BARRIER
-    ,
-    OpWake
-#endif
-};
-
-class CMonitor : public CTmSync_Container
-{
+#ifndef NAMESERVER_PROCESS
 friend class SQ_LocalIOToClient;
 friend class CExternalReq;
+#endif
 public:
     int OpenCount;
     int NoticeCount;
@@ -59,7 +54,11 @@ public:
     int NumOutstandingIO;     // Current # of I/Os outstanding
     int NumOutstandingSends;  // Current # of Sends outstanding
 
+#ifdef NAMESERVER_PROCESS
+    CMonitor(void);
+#else
     CMonitor( int procTermSig );
+#endif
     ~CMonitor( void );
 
     bool  CompleteProcessStartup( struct message_def *msg );
@@ -69,7 +68,10 @@ public:
     void  DecrOpenCount(void);
     void  DecrNoticeCount(void);
     void  DecrProcessCount(void);
+#ifndef NAMESERVER_PROCESS
     void  StartPrimitiveProcesses( void );  
+#endif
+#ifndef NAMESERVER_PROCESS
     void  openProcessMap ( void );
     void  writeProcessMapEntry ( const char * buf );
     void  writeProcessMapBegin( const char *name
@@ -88,6 +90,7 @@ public:
                             , int parentPid
                             , int parentVerifier
                             , const char *program );
+#endif
     int   GetProcTermSig() { return procTermSig_; }
     int   PackProcObjs(char *&buffer);
     void  UnpackProcObjs(char *&buffer, int procCount);
@@ -97,7 +100,9 @@ public:
 protected:
 private:
     int  Last_error;     // last MPI error returned
+#ifndef NAMESERVER_PROCESS
     int  processMapFd;   // file desc for process map file
+#endif
 
 #ifdef DELAY_TP
     void Delay_TP(char *tpName);

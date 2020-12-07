@@ -101,11 +101,19 @@ ExEspFragInstanceDir::ExEspFragInstanceDir(CliGlobals *cliGlobals,
   pid_ = phandle.getPin();
 
   tid_ = syscall(SYS_gettid);
-  if (statsGlobals_ == NULL
-    || (statsGlobals_ != NULL && 
-      statsGlobals_->getVersion() != StatsGlobals::CURRENT_SHARED_OBJECTS_VERSION_))
+  NABoolean reportError = FALSE;
+  char msg[256];;
+  if ((statsGlobals_ == NULL)
+     || ((statsGlobals_ != NULL) &&  (statsGlobals_->getInitError(pid_, reportError))))
   {
+    if (reportError) {
+         snprintf(msg, sizeof(msg), 
+          "Version mismatch or Pid %d,%d is higher than the configured pid max %d",
+           cpu_, pid_, statsGlobals_->getConfiguredPidMax()); 
+         SQLMXLoggingArea::logExecRtInfo(__FILE__, __LINE__, msg, 0);
+    }
     statsGlobals_ = NULL;
+
     statsHeap_ = new (heap_) 
         NAHeap("Process Stats Heap", (NAHeap *)heap_,
         8192,
@@ -123,6 +131,7 @@ ExEspFragInstanceDir::ExEspFragInstanceDir(CliGlobals *cliGlobals,
     }
     else
     {
+      bool reincarnated;
       cliGlobals_->setStatsGlobals(statsGlobals_);
       cliGlobals_->setSemId(semId_);
       error = statsGlobals_->getStatsSemaphore(semId_, pid_);
@@ -134,12 +143,14 @@ ExEspFragInstanceDir::ExEspFragInstanceDir(CliGlobals *cliGlobals,
       // We need to set up the cliGlobals, since addProcess will call getRTSSemaphore
       // and it uses these members
       cliGlobals_->setStatsHeap(statsHeap_);
-      statsGlobals_->addProcess(pid_, statsHeap_);
+      reincarnated = statsGlobals_->addProcess(pid_, statsHeap_);
       ExProcessStats *processStats = 
            statsGlobals_->getExProcessStats(pid_);
       processStats->setStartTime(cliGlobals_->myStartTime());
       cliGlobals_->setExProcessStats(processStats);
       statsGlobals_->releaseStatsSemaphore(semId_, pid_);
+      if (reincarnated)
+         statsGlobals_->logProcessDeath(cpu_, pid_, "Process reincarnated before RIP");
     }
   }
   cliGlobals_->setStatsHeap(statsHeap_);
@@ -183,6 +194,7 @@ ExEspFragInstanceDir::~ExEspFragInstanceDir()
     int error = statsGlobals_->getStatsSemaphore(semId_, pid_);
     statsGlobals_->removeProcess(pid_);
     statsGlobals_->releaseStatsSemaphore(semId_, pid_);
+    statsGlobals_->logProcessDeath(cpu_, pid_, "Normal process death");
     sem_close((sem_t *)semId_);
   }
 }
@@ -707,7 +719,7 @@ void ExEspFragInstanceDir::work(Int64 prevWaitTime)
 	      case ACTIVE:
 
 #ifdef NA_DEBUG_GUI
-		if (instances_[currInst]->displayInGui_ == 2)
+		if (instances_[currInst]->displayInGui_ == 1)
 		  instances_[currInst]->globals_->getScheduler()->startGui();
 #endif
 		// To help debugging (dumps): Put current SB TCB in cli globals
@@ -756,6 +768,11 @@ void ExEspFragInstanceDir::work(Int64 prevWaitTime)
                       loopAgain = TRUE;
                     }
                   }
+#ifdef NA_DEBUG_GUI
+		if (instances_[currInst]->fiState_ != ACTIVE &&
+                    instances_[currInst]->displayInGui_ == 1)
+		  instances_[currInst]->globals_->getScheduler()->stopGui();
+#endif
                 break;
 
               case WAIT_TO_RELEASE:
@@ -1442,35 +1459,6 @@ void ExEspControlMessage::actOnFixupFragmentReq(ComDiagsArea &da)
       //      able to send a reply
     }
 
-  // if fixup priority has been sent, save that so my priority could be restored to
-  // this value.
-  if (receivedRequest.getEspFixupPriority() > 0)
-    {
-      glob->setMyFixupPriority((IpcPriority)receivedRequest.getEspFixupPriority());
-    }
-
-  // if execute priority has been sent, set my priority to that value.
-  if (receivedRequest.getEspExecutePriority() > 0)
-    {
-      Lng32 rc = 0;
-
-      // get my current priority and save it in stmt globals.
-      // If an error is returned, ignore and leave priorities as is.
-      //      long p;
-      //rc = ComRtGetProcessPriority(p);
-      //      if (rc == 0) // no error
-      //	{
-      // set the execute priority
-      rc = 
-	ComRtSetProcessPriority(receivedRequest.getEspExecutePriority(), 
-				FALSE);
-      if (rc != 0)
-	{
-	  // don't do anything.
-	}
-      //	}
-    }
-
   // the reply is handled by the caller
 }
 
@@ -1488,7 +1476,6 @@ void ExEspControlMessage::actOnReleaseFragmentReq(ComDiagsArea & /*da*/)
   currHandle_ = fragInstanceDir_->findHandle(receivedRequest.key_);
 
   ExEspStmtGlobals *glob = NULL;
-  IpcPriority myFixupPriority = 0;
 
   if (receivedRequest.deleteStmt())
     {
@@ -1504,7 +1491,6 @@ void ExEspControlMessage::actOnReleaseFragmentReq(ComDiagsArea & /*da*/)
 		  glob = fragInstanceDir_->getGlobals(i);
 		  if (glob)
 		    {
-		      myFixupPriority = glob->getMyFixupPriority();
 		      glob->setCloseAllOpens(receivedRequest.closeAllOpens());
 		    }
 		}
@@ -1532,7 +1518,6 @@ void ExEspControlMessage::actOnReleaseFragmentReq(ComDiagsArea & /*da*/)
 	  glob = fragInstanceDir_->getGlobals(currHandle_);
 	  if (glob)
 	    {
-	      myFixupPriority = glob->getMyFixupPriority();
 	      glob->setCloseAllOpens(receivedRequest.closeAllOpens());
 	    }
 
@@ -1550,17 +1535,6 @@ void ExEspControlMessage::actOnReleaseFragmentReq(ComDiagsArea & /*da*/)
       fragInstanceDir_->numMasters_--;
     }
 
-  // change my priority back to my 'fixup' priority.
-  if (myFixupPriority > 0)
-    {
-      Lng32 rc = 
-	ComRtSetProcessPriority(myFixupPriority, FALSE);
-      if (rc != 0)
-	{
-	  // ignore error.
-	}
-    }
-  
   // how long to keep idle esp alive
   environment_->setStopAfter(receivedRequest.idleTimeout_);
 
@@ -1614,26 +1588,6 @@ void ExEspControlMessage::actOnReqForSplitBottom(IpcConnection *connection)
     {
       ex_split_bottom_tcb * splitBottom =
 	fragInstanceDir_->getTopTcb(currHandle_);
-
-      if (changePri)
-	{
-	  // change my priority back to my 'fixup' priority.
-	  ExEspStmtGlobals *glob = fragInstanceDir_->getGlobals(currHandle_);
-	  IpcPriority myFixupPriority = glob->getMyFixupPriority();
-	  if (myFixupPriority > 0)
-	    {
-	      Lng32 rc = 
-		ComRtSetProcessPriority(myFixupPriority, FALSE);
-	      if (rc != 0)
-		{
-		  // ignore error.
-		}
-
-	      // reset priority indication in global
-	      glob->setMyFixupPriority(0);
-	      
-	    }
-	}
 
       if (splitBottom)
 	{

@@ -319,12 +319,12 @@ if (CURRSTMT_OPTDEFAULTS->optimizerHeuristic2()) {//#ifdef _DEBUG
 #ifdef NA_DEBUG_GUI
   CMPASSERT(gpClusterInfo != NULL);
   if (CmpMain::msGui_ && CURRENTSTMT->displayGraph() )
-    CmpMain::pExpFuncs_->fpSqldbgSetPointers(CURRSTMT_OPTGLOBALS->memo
-                                             ,CURRSTMT_OPTGLOBALS->task_list
-                                             ,QueryAnalysis::Instance()
-                                             ,cmpCurrentContext
-                                             ,gpClusterInfo
-                                             );
+    CmpMain::pExpFuncs_->fpSqldbgSetCmpPointers(CURRSTMT_OPTGLOBALS->memo
+                                                ,CURRSTMT_OPTGLOBALS->task_list
+                                                ,QueryAnalysis::Instance()
+                                                ,cmpCurrentContext
+                                                ,gpClusterInfo
+                                                );
 #endif
 
   // ---------------------------------------------------------------------
@@ -634,11 +634,12 @@ if (CURRSTMT_OPTDEFAULTS->optimizerHeuristic2()) {//#ifdef _DEBUG
           if (CmpMain::msGui_ && CURRENTSTMT->displayGraph())
             {
               CMPASSERT(gpClusterInfo != NULL);
-              CmpMain::pExpFuncs_->fpSqldbgSetPointers(CURRSTMT_OPTGLOBALS->memo, CURRSTMT_OPTGLOBALS->task_list,
-                                                       QueryAnalysis::Instance(),
-                                                       cmpCurrentContext,
-                                                       gpClusterInfo
-                                                       );
+              CmpMain::pExpFuncs_->fpSqldbgSetCmpPointers(
+                   CURRSTMT_OPTGLOBALS->memo,
+                   CURRSTMT_OPTGLOBALS->task_list,
+                   QueryAnalysis::Instance(),
+                   cmpCurrentContext,
+                   gpClusterInfo);
 
               CmpMain::pExpFuncs_->fpDisplayQueryTree(optPass, NULL,
                                                       (void*) context->getSolution());
@@ -4999,7 +5000,7 @@ void OptDefaults::initialize(RelExpr* rootExpr)
   // interval is (this mirrors the logic in runtimestats/ssmpipc.cpp), so
   // we can fail-safe the histogram cache.
 
-  char *sct = getenv("RMS_SIK_GC_INTERVAL_SECONDS");  // in seconds
+  static char *sct = getenv("RMS_SIK_GC_INTERVAL_SECONDS");  // in seconds
   if (sct)
     {
       siKeyGCinterval_ = ((Int64) str_atoi(sct, str_len(sct)));
@@ -6265,9 +6266,12 @@ void OptDebug::showEstLogProp( const EstLogPropSharedPtr& estLogProp,
 
     ColStatsSharedPtr colStats = stats[i]->getColStats();
 
-    out << prefix << "Table Column: "
-        << colStats->getStatColumns()[0]->getFullColRefNameAsAnsiString().data()
-        << endl;
+    out << prefix << "Table Column: ";
+    if (colStats->getStatColumns().entries() > 0)
+      out << colStats->getStatColumns()[0]->getFullColRefNameAsAnsiString().data();
+    else
+      out << "(None)";
+    out << endl;
 
     if (colStats->isFakeHistogram())
       out << prefix << "*** FAKE HISTOGRAM ***" << endl;
@@ -7222,12 +7226,12 @@ void QueryOptimizerDriver::DEBUG_GUI_SET_POINTERS()
 #ifdef NA_DEBUG_GUI
   CMPASSERT(gpClusterInfo != NULL);
   if (CmpMain::msGui_ && CURRENTSTMT->displayGraph() )
-    CmpMain::pExpFuncs_->fpSqldbgSetPointers( CURRSTMT_OPTGLOBALS->memo
-					      ,CURRSTMT_OPTGLOBALS->task_list
-					      ,QueryAnalysis::Instance()
-					      ,cmpCurrentContext
-					      ,gpClusterInfo
-					      );
+    CmpMain::pExpFuncs_->fpSqldbgSetCmpPointers(
+         CURRSTMT_OPTGLOBALS->memo,
+         CURRSTMT_OPTGLOBALS->task_list,
+         QueryAnalysis::Instance(),
+         cmpCurrentContext,
+         gpClusterInfo);
 #endif
 }
 
@@ -7272,12 +7276,12 @@ DEBUG_GUI_DISPLAY_AFTER_OPTIMIZATION(Context *context)
   if (CmpMain::msGui_ && CURRENTSTMT->displayGraph())
     {
       CMPASSERT(gpClusterInfo != NULL);
-      CmpMain::pExpFuncs_->fpSqldbgSetPointers( CURRSTMT_OPTGLOBALS->memo,
-						CURRSTMT_OPTGLOBALS->task_list,
-						QueryAnalysis::Instance(),
-						cmpCurrentContext,
-						gpClusterInfo
-						);
+      CmpMain::pExpFuncs_->fpSqldbgSetCmpPointers(
+           CURRSTMT_OPTGLOBALS->memo,
+           CURRSTMT_OPTGLOBALS->task_list,
+           QueryAnalysis::Instance(),
+           cmpCurrentContext,
+           gpClusterInfo);
 
       CmpMain::pExpFuncs_->fpDisplayQueryTree( optPass, NULL,
 					       (void*) context->getSolution());

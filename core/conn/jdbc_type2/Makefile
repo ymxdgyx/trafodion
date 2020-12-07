@@ -46,6 +46,10 @@ T2_OBJS  = $(OUTDIR)/CommonDiags.o \
        $(OUTDIR)/SQLMXPreparedStatement.o \
        $(OUTDIR)/SQLMXResultSet.o \
        $(OUTDIR)/SQLMXStatement.o \
+       $(OUTDIR)/SQLMXClobReader.o \
+       $(OUTDIR)/SQLMXClobWriter.o \
+       $(OUTDIR)/SQLMXLobInputStream.o \
+       $(OUTDIR)/SQLMXLobOutputStream.o \
        $(OUTDIR)/SrvrJdbcConnect.o \
        $(OUTDIR)/CDesc.o \
        $(OUTDIR)/SrvrCommon.o \
@@ -65,6 +69,10 @@ CSES := org.apache.trafodion.jdbc.t2.JdbcDebug \
 		org.apache.trafodion.jdbc.t2.T2Driver \
 		org.apache.trafodion.jdbc.t2.SQLMXPreparedStatement \
 		org.apache.trafodion.jdbc.t2.SQLMXResultSet \
+		org.apache.trafodion.jdbc.t2.SQLMXClobReader \
+		org.apache.trafodion.jdbc.t2.SQLMXClobWriter \
+		org.apache.trafodion.jdbc.t2.SQLMXLobInputStream \
+		org.apache.trafodion.jdbc.t2.SQLMXLobOutputStream \
 		org.apache.trafodion.jdbc.t2.SQLMXStatement
 OBJS = $(COMMON_OBJS) $(T2_OBJS)
 MXODIR = $(TRAF_HOME)/../conn/odbc/src/odbc
@@ -77,6 +85,7 @@ DEFINES =  $(COMMON_DEFINES)
 CODEGEN = -fPIC
 
 .PHONY: all
+java_files:=$(shell find src/main/java -name *.java*|grep -v DriverInfo.java)
 
 LN :=/bin/ln -sf
 JAVAH :=$(JAVA_HOME)/bin/javah
@@ -84,12 +93,12 @@ EXPROOT :=  ${TRAF_HOME}/export
 CP := /bin/cp -f
 all: LICENSE NOTICE $(LIBEXPDIR)/libjdbcT2.so  
 
-$(EXPROOT)/lib/jdbcT2.jar:
-	./getBuildInfo
-	$(MAVEN) install -DskipTests
-	$(CP) target/trafjdbcT2-${TRAFODION_VER}.jar $(EXPROOT)/lib
+$(EXPROOT)/lib/jdbcT2.jar: $(java_files)
+	./getBuildInfo 
+	$(MAVEN) install -DskipTests 
+	$(CP) target/trafjdbcT2-${TRAFODION_VER}.jar $(EXPROOT)/lib 
 	`cd ${TRAF_HOME}/export/lib;$(LN) trafjdbcT2-${TRAFODION_VER}.jar jdbcT2.jar` 
-	$(JAVAH) -cp $(EXPROOT)/lib/jdbcT2.jar -d native $(CSES)
+	$(JAVAH) -cp $(EXPROOT)/lib/jdbcT2.jar -d native $(CSES) 
 
 $(LIBEXPDIR)/libjdbcT2.so: $(OBJS)
 	$(CXX) -shared $(GCCMODE) -o $@ $(DBG_FLGS) -L$(LIBEXPDIR) -lsbfs -lsbms -levlsq -lwin -ltdm_sqlcli  -larkcmp_dll -larkcmplib -lcommon -lsort -lexecutor -lcomexe -lcli $(OBJS)
@@ -98,8 +107,10 @@ $(OBJS): $(EXPROOT)/lib/jdbcT2.jar
 
 $(OUTDIR)/type2version.o: $(TRAF_HOME)/export/include/SCMBuildStr.h
 
-clean:
-	$(MAVEN) clean
+mvn_clean:
+	-$(MAVEN) clean | grep -e '\[INFO\] Building' -e '\[INFO\] BUILD SUCCESS' -e 'ERROR'
+
+clean: $(shell if [ -d target ]; then echo "mvn_clean"; fi)
 	$(RM) $(LIBEXPDIR)/libjdbcT2.so
 	$(RM) -f $(EXPROOT)/lib/jdbcT2*.jar
 	$(RM) -rf $(OUTDIR)

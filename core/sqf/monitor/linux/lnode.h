@@ -88,9 +88,8 @@ public:
                                       int os_pid, 
                                       bool event_messages,
                                       bool system_messages,
-                                      struct timespec *creation_time );
-    void    PrepareForTransactions( bool activatingSpare );
-    void    SendDTMRestarted( void );
+                                      struct timespec *creation_time,
+                                      int origPNidNs );
     inline void SetCpuUser( long long num ) { cpuUser_ = num; }
     inline void SetCpuNice( long long num ) { cpuNice_ = num; }
     inline void SetCpuSystem( long long num ) { cpuSystem_ = num; }
@@ -105,8 +104,11 @@ public:
 
     bool    IsKillingNode( void );
 
-    CLNode *Link( CLNode *entry );
-    CLNode *LinkP( CLNode *entry );
+    CLNode  *LinkAfter( CLNode * &tail, CLNode * entry );
+    CLNode  *LinkBefore( CLNode * &head, CLNode * entry );
+    CLNode  *LinkAfterP( CLNode * &tail, CLNode * entry );
+    CLNode  *LinkBeforeP( CLNode * &head, CLNode * entry );
+
     void    SetAffinity( pid_t pid, PROCESSTYPE type );
     void    SetAffinity( CProcess *process );
 

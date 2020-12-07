@@ -81,8 +81,7 @@ IpcServer *ExSsmpManager::getSsmpServer(NAHeap *heap, char *nodeName, short cpuN
 
    char *tmpProcessName;
 
-   tmpProcessName = ssmpServerClass_->getProcessName(nodeName,
-             (short) str_len(nodeName), cpuNum, ssmpProcessName);
+   tmpProcessName = ssmpServerClass_->getProcessName(cpuNum, ssmpProcessName);
    ex_assert(tmpProcessName != NULL, "ProcessName can't be null");
 
    processNameLen = str_len(tmpProcessName);
@@ -119,7 +118,6 @@ IpcServer *ExSsmpManager::getSsmpServer(NAHeap *heap, char *nodeName, short cpuN
             env_->getHeap(),
             nodeName,
             cpuNum,
-            IPC_PRIORITY_DONT_CARE,
             FALSE);
    if (ssmpServer != NULL && ssmpServer->castToIpcGuardianServer()->isReady())
    {
@@ -146,8 +144,7 @@ void ExSsmpManager::removeSsmpServer(char *nodeName, short cpuNum)
    Int32 processNameLen = 0;
 
    char *tmpProcessName;
-   tmpProcessName = ssmpServerClass_->getProcessName(nodeName,
-             (short) str_len(nodeName), cpuNum, ssmpProcessName);
+   tmpProcessName = ssmpServerClass_->getProcessName(cpuNum, ssmpProcessName);
    ex_assert(tmpProcessName != NULL, "ProcessName can't be null");
 
    processNameLen = str_len(tmpProcessName);
@@ -260,7 +257,6 @@ SsmpGlobals::SsmpGlobals(NAHeap *ssmpheap, IpcEnvironment *ipcEnv,  StatsGlobals
 
   (void)phandle.getmine(statsGlobals->getSsmpProcHandle());
   statsGlobals_->setSsmpPid(myPin_);
-  statsGlobals_->setSsmpPriority(pri);
   statsGlobals_->setSsmpTimestamp(myStartTime);
   statsGlobals_->setStoreSqlSrcLen(storeSqlSrcLen_);
   statsGlobals_->setSsmpProcSemId(semId_);
@@ -360,7 +356,6 @@ IpcServer *SsmpGlobals::allocateServer(char *nodeName, short nodeNameLen, short 
             heap_,
 	    serverId.nodeName_,
             serverId.cpuNum_,
-            IPC_PRIORITY_DONT_CARE,
             1, // espLevel
             FALSE);
   if (server != NULL && server->castToIpcGuardianServer()->isReady())
@@ -432,8 +427,7 @@ ULng32 SsmpGlobals::deAllocateServer(char *nodeName, short nodeNameLen,  short c
   serverId.nodeName_[0] = '\0';
   serverId.cpuNum_ = cpuNum;
   char *tmpProcessName;
-  tmpProcessName = sscpServerClass_->getProcessName(serverId.nodeName_,
-            (short) str_len(serverId.nodeName_), cpuNum, sscpProcessName);
+  tmpProcessName = sscpServerClass_->getProcessName(cpuNum, sscpProcessName);
   ex_assert(tmpProcessName != NULL, "ProcessName can't be null");
 
   sscps_->position(tmpProcessName, str_len(tmpProcessName));
@@ -500,8 +494,7 @@ void SsmpGlobals::allocateServerOnNextRequest(char *nodeName,
   // we will pretend that we got a NodeDown and NodeUp message and
   // issue an EMS event.
   char *tmpProcessName;
-  tmpProcessName = sscpServerClass_->getProcessName(serverId.nodeName_,
-            (short) str_len(serverId.nodeName_), cpuNum, sscpProcessName);
+  tmpProcessName = sscpServerClass_->getProcessName(cpuNum, sscpProcessName);
   ex_assert(tmpProcessName != NULL, "ProcessName can't be null");
 
   sscps_->position(tmpProcessName, str_len(tmpProcessName));
@@ -786,45 +779,78 @@ bool SsmpGlobals::cancelQuery(char *queryId, Lng32 queryIdLen,
   int error;
   char tempQid[ComSqlId::MAX_QUERY_ID_LEN+1];
 
-
+  static int stopProcessAfterInSecs = 
+             (getenv("MIN_QUERY_ACTIVE_TIME_IN_SECS_BEFORE_CANCEL") != NULL ? atoi(getenv("MIN_QUERY_ACTIVE_TIME_IN_SECS_BEFORE_CANCEL")) : -1);
   ActiveQueryEntry * aq = (queryId ? getActiveQueryMgr().getActiveQuery(
                        queryId, queryIdLen) : NULL);
+  ExMasterStats * cMasterStats = NULL;
+  StmtStats *cqStmtStats = NULL;
 
   if (aq == NULL)
   {
      error = statsGlobals->getStatsSemaphore(getSemId(), myPin());
-     StmtStats *cqStmtStats = statsGlobals->getMasterStmtStats(
+     cqStmtStats = statsGlobals->getMasterStmtStats(
                 queryId, queryIdLen,
                 RtsQueryId::ANY_QUERY_);
-     if (cqStmtStats == NULL)
+     if (cqStmtStats == NULL) {
         sqlErrorCode = -EXE_CANCEL_QID_NOT_FOUND;
-     else
-     {
-        ExMasterStats * cMasterStats = cqStmtStats->getMasterStats();
-        if (cMasterStats)
-        {
+        statsGlobals->releaseStatsSemaphore(getSemId(), myPin());
+     } else {
+        cMasterStats = cqStmtStats->getMasterStats();
+        if (cMasterStats == NULL) {
+            sqlErrorCode = -EXE_CANCEL_NOT_POSSIBLE;
+            sqlErrorDesc = "The query is not registered with cancel broker";
+            statsGlobals->releaseStatsSemaphore(getSemId(), myPin());
+        } else {
            Statement::State stmtState = (Statement::State)cMasterStats->getState();
            if (stmtState != Statement::OPEN_ &&
                    stmtState  != Statement::FETCH_ &&
-                   stmtState != Statement::STMT_EXECUTE_)
-           {
+                   stmtState != Statement::STMT_EXECUTE_) {
               sqlErrorCode = -EXE_CANCEL_NOT_POSSIBLE;
               sqlErrorDesc = "The query is not in OPEN or FETCH or EXECUTE state";
-           }
-           else
-           {
-              sqlErrorCode = -EXE_CANCEL_NOT_POSSIBLE;
-              sqlErrorDesc = "The query is not registered with the cancel broker";
-           }
-        }
-        else
-        {
-           sqlErrorCode = -EXE_CANCEL_NOT_POSSIBLE;
-           sqlErrorDesc = "The query state is not known";
-        }
-     }
-     statsGlobals->releaseStatsSemaphore(getSemId(), myPin());
-  }
+              statsGlobals->releaseStatsSemaphore(getSemId(), myPin());
+           } else {
+              if ((stopProcessAfterInSecs <= 0) || (cMasterStats->getExeEndTime() != -1)) {
+                 sqlErrorCode = -EXE_CANCEL_NOT_POSSIBLE;
+                 sqlErrorDesc = "The query can't be canceled because it finished processing";
+                 statsGlobals->releaseStatsSemaphore(getSemId(), myPin());
+              } else {
+                 Int64 exeStartTime = cMasterStats->getExeStartTime();
+                 int exeElapsedTimeInSecs = 0;
+                 if (exeStartTime != -1) {
+                    Int64 exeElapsedTime = NA_JulianTimestamp() - cMasterStats->getExeStartTime();
+                    exeElapsedTimeInSecs = exeElapsedTime / 1000000;
+                 }
+                 statsGlobals->releaseStatsSemaphore(getSemId(), myPin());
+                 if (exeElapsedTimeInSecs > 0 && exeElapsedTimeInSecs > (stopProcessAfterInSecs)) {
+                    sqlErrorCode = stopMasterProcess(queryId, queryIdLen); 
+                    if (sqlErrorCode != 0) {
+                       switch (sqlErrorCode) {
+                          case -1:
+                             sqlErrorDesc = "Unable to get node number";
+                             break;
+                          case -2:
+                             sqlErrorDesc = "Unable to get pid";
+                             break;
+                          case -3:
+                             sqlErrorDesc = "Unable to get process name";
+                             break;
+                          default:
+                             sqlErrorDesc = "Unable to stop the process";
+                             break; 
+                       } // switch
+                       sqlErrorCode = -EXE_CANCEL_NOT_POSSIBLE;
+                    } else 
+                      didAttemptCancel = true;
+                 } else {
+                     sqlErrorDesc = "The query can't be canceled because cancel was requested earlier than required minimum query active time";
+                     sqlErrorCode = -EXE_CANCEL_NOT_POSSIBLE;
+                 } // stopAfterNSecs
+              } // ExeEndTime
+          } //StmtState
+       } // cMasterStats 
+    } // cqStmtStats
+  } // aq
   else
   if (aq && (aq->getQueryStartTime() <= cancelStartTime))
   {
@@ -1013,6 +1039,23 @@ bool SsmpGlobals::activateFromQid(
   return doAttemptActivate;
 }
 
+Lng32 SsmpGlobals::stopMasterProcess(char *queryId, Lng32 queryIdLen)
+{
+   Lng32 retcode;
+   Int64 node;
+   Int64 pin;
+   char processName[MS_MON_MAX_PROCESS_NAME+1];
+
+   if ((retcode = ComSqlId::getSqlSessionIdAttr(ComSqlId::SQLQUERYID_CPUNUM, queryId, queryIdLen, node, NULL)) != 0)
+      return -1;
+   if ((retcode = ComSqlId::getSqlSessionIdAttr(ComSqlId::SQLQUERYID_PIN, queryId, queryIdLen, pin, NULL)) != 0)
+      return -2;
+   if ((retcode = msg_mon_get_process_name((int)node, (int)pin, processName)) != XZFIL_ERR_OK)
+      return -3; 
+   if ((retcode = msg_mon_stop_process_name(processName)) != XZFIL_ERR_OK)
+      return retcode;   
+   return 0;    
+}
 
 void SsmpGuaReceiveControlConnection::actOnSystemMessage(
        short                  messageNum,
@@ -1186,6 +1229,9 @@ void SsmpNewIncomingConnectionStream::actOnReceive(IpcConnection *connection)
     break;
   case SECURITY_INVALID_KEY_REQ:
     actOnSecInvalidKeyReq(connection);
+    break;
+  case LOB_LOCK_REQ:
+    actOnLobLockReq(connection);
     break;
   default:
     ex_assert(FALSE,"Invalid request from client");
@@ -1618,7 +1664,65 @@ void SsmpNewIncomingConnectionStream::actOnActivateQueryReq(
       "expected an RTS_QUERY_ID following a SuspendQueryRequest");
 
 }
+void SsmpNewIncomingConnectionStream::actOnLobLockReq(
+                                               IpcConnection *connection)
+{
+  IpcMessageObjVersion msgVer = getNextObjVersion();
+  StatsGlobals *statsGlobals;
+  NABoolean releasingLock = FALSE;
+  CliGlobals *cliGlobals = GetCliGlobals();
+  ex_assert(msgVer <= CurrLobLockVersionNumber,
+            "Up-rev message received.");
+  LobLockRequest *llReq= new (getHeap()) LobLockRequest(getHeap());
+  *this >> *llReq;
+  setHandle(llReq->getHandle());
+  ex_assert(!moreObjects(),"Unexpected objects following LobLockRequest");
+  clearAllObjects();
+  //check and set the lock in the local shared segment 
+  statsGlobals = ssmpGlobals_->getStatsGlobals();
+  char *inLobLockId = NULL;
+  inLobLockId = llReq->getLobLockId();
+  if (inLobLockId[0] == '-')   //we are releasing this lock. No need to check.
+    inLobLockId = NULL;
+  else
+    {
+      inLobLockId = &inLobLockId[1];
+      statsGlobals->checkLobLock(cliGlobals, inLobLockId);
+    }
+    
+  if (inLobLockId)
+    {
+      //It's already set, don't propagate
+      if (sscpDiagsArea_== NULL)
+        sscpDiagsArea_ = ComDiagsArea::allocate(ssmpGlobals_->getHeap());
+      *sscpDiagsArea_<< DgSqlCode(-EXE_LOB_CONCURRENT_ACCESS_ERROR);
+      RmsGenericReply *reply = new(getHeap())
+        RmsGenericReply(getHeap());
 
+      *this << *reply;
+      *this << *sscpDiagsArea_;
+      this->clearSscpDiagsArea();
+      send(FALSE);
+      reply->decrRefCount();
+    }
+  else
+    {
+                             
+      // Forward request to all mxsscps.
+      ssmpGlobals_->allocateServers();
+      SscpClientMsgStream *sscpMsgStream = new (heap_)
+        SscpClientMsgStream(heap_, getIpcEnv(), ssmpGlobals_, this);
+      sscpMsgStream->setUsedToSendLLMsgs();
+      ssmpGlobals_->addRecipients(sscpMsgStream);
+      sscpMsgStream->clearAllObjects();
+      *sscpMsgStream << *llReq;
+      llReq->decrRefCount();
+      sscpMsgStream->send(FALSE);
+    }
+  // Reply to client when the msgs to mxsscp have all completed.  The reply
+  // is made from the sscpMsgStream's callback.
+
+}
 void SsmpNewIncomingConnectionStream::actOnSecInvalidKeyReq(
                                                IpcConnection *connection)
 {
@@ -2322,6 +2426,11 @@ void SscpClientMsgStream::actOnReceiveAllComplete()
           replySik();
           break;
         }
+        case LL:
+        {
+          replyLL();
+          break;
+        }
         default:
         {
           ex_assert(FALSE, "Unknown completionProcessing_ flag.");
@@ -2335,6 +2444,25 @@ void SscpClientMsgStream::actOnReceiveAllComplete()
 }
 
 void SscpClientMsgStream::replySik()
+{
+  RmsGenericReply *reply = new(getHeap())
+    RmsGenericReply(getHeap());
+
+  *ssmpStream_ << *reply;
+
+  if (ssmpStream_->getSscpDiagsArea())
+  {
+    // Pass errors from communication w/ SSCPs back to the
+    // client.
+    *ssmpStream_ << *(ssmpStream_->getSscpDiagsArea());
+    ssmpStream_->clearSscpDiagsArea();
+  }
+
+  ssmpStream_->send(FALSE);
+  reply->decrRefCount();
+}
+
+void SscpClientMsgStream::replyLL()
 {
   RmsGenericReply *reply = new(getHeap())
     RmsGenericReply(getHeap());

@@ -62,6 +62,7 @@ public:
     virtual ~CHealthCheck();
 
     inline HealthCheckStates GetState( void ) { CAutoLock alock(healthCheckLock_.getLocker()); return( state_ ); }
+    inline int getSyncTimeout( void ) { return( monSyncTimeout_ ); }
     void start();
     void shutdownWork();
     void setState(HealthCheckStates st, long long param1 = 0);
@@ -72,8 +73,13 @@ public:
     static void sigusr2SignalHandler (int , siginfo_t *, void *);
 
     pthread_t tid() { return thread_id_; }
+    void timeToLogHealth(struct timespec &ts);
+    void triggerTimeToLogHealth( void );
 
+    enum { HEALTH_LOGGING_FREQUENCY_DEFAULT = 3600 }; // Default 1 hour between health log messages
+    enum { HEALTH_LOGGING_FREQUENCY_MIN = 60 };       // Mininum 1 minute between health log messages
     enum { QUIESCE_TIMEOUT_DEFAULT = 30 };  // Max seconds to wait for SE processes to exit 
+    enum { SYNC_TIMEOUT_DEFAULT = 900 };    // Max seconds to wait for synchThread(main) Allgather IO completion
 
 private:
 
@@ -83,6 +89,10 @@ private:
     void processTimerEvent();
     void startQuiesce();
     void scheduleNodeDown();
+    const char *getStateStr(HealthCheckStates state);
+#ifdef NAMESERVER_PROCESS
+    void stopNameServer();
+#endif
 
     HealthCheckStates state_;           // current state of the health check thread
     long long param1_;                  // optional param
@@ -93,6 +103,8 @@ private:
     struct timespec lastReqCheckTime_;  // last time when request was checked for responsiveness
     struct timespec lastSyncCheckTime_; // last time when sync thread was checked for responsiveness
     struct timespec nonresponsiveTime_; // start time when Sync thread became unresponsive
+    struct timespec nextHealthLogTime_; // next time this monitor's health is to be logged
+    int  healthLoggingFrequency_;       // Seconds between health log messages
     long long wakeupTimeSaved_;         // time when healthcheck thread should wakeup, in secs.
     CProcess * watchdogProcess_;        // ptr to the watchdog process object
     CProcess * smserviceProcess_;       // ptr to the smservice process object
@@ -103,6 +115,7 @@ private:
     bool checkReqResponsive_;           // should req thread be checked for responsiveness or not
     int  monSyncTimeout_;               // timeout (in secs) for sync thread responsiveness
     int  refreshCounter_;               // monitor heartbeats, updated every second.
+    bool cpuSchedulingDataEnabled_;     // monitors exchange CPU scheduling data when enabled
 };
 
 #endif

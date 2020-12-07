@@ -60,7 +60,6 @@
 
 class ex_globals;
 class CliGlobals;
-class ExHbaseAccessStats;
 
 Int64 getTransactionIDFromContext();
 
@@ -357,7 +356,6 @@ class ExpHbaseInterface : public NABasicObject
                                  NABoolean useCoprocessor,
                                  Int64& estRC,
                                  Int32& breadCrumb) = 0;
-  virtual Lng32 getLatestSnapshot(const char * tableName, char *& snapshotName, NAHeap * heap) = 0;
   virtual Lng32 cleanSnpTmpLocation( const char * path)=0;
   virtual Lng32 setArchivePermissions( const char * tbl)=0;
 
@@ -667,7 +665,6 @@ virtual Lng32 initHFileParams(HbaseStr &tblName,
                                  Int64& estRC,
                                  Int32& breadCrumb);
 
-  virtual Lng32 getLatestSnapshot(const char * tableName, char *& snapshotName, NAHeap * heap);
   virtual Lng32 cleanSnpTmpLocation( const char * path);
   virtual Lng32  setArchivePermissions( const char * tabName) ;
 

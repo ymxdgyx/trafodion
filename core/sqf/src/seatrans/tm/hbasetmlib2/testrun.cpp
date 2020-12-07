@@ -41,7 +41,7 @@ int main () {
    short lv_dtmid = 0;
    char *errStr = NULL;
    int   errStrLen = 0;
-   long ctrlPtNum;
+   long ctrlPtNum = 0;
    CHbaseTM *lp_myHbaseTM = 0;
 
    lp_myHbaseTM = new CHbaseTM();
@@ -139,7 +139,7 @@ int main () {
    printf("After lp_myHbaseTM->doCommit(transactionId = %ld), retcode = %d \n", lv_txid, lv_retcode);
 
    ctrlPtNum = lp_myHbaseTM->addControlPoint();
-   printf("After lp_myHbaseTM->addControlPoint, transactionId = %ld \n", lv_txid);
+   printf("After lp_myHbaseTM->addControlPoint, (transactionId = %ld),  ctrlPtNum = %ld \n", lv_txid, ctrlPtNum);
 
    delete lp_myHbaseTM;
    

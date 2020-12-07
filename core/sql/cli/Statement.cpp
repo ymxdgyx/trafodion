@@ -84,6 +84,8 @@
 #include "arkcmp_proc.h"
 #include "CmpContext.h"
 
+#include "HiveClient_JNI.h"
+
 // Printf-style tracing macros for the debug build. The macros are
 // no-ops in the release build.
 #ifdef _DEBUG
@@ -1163,10 +1165,6 @@ RETCODE Statement::close(ComDiagsArea &diagsArea, NABoolean inRollback)
       rsInfo->reset();
     } // if (rsInfo)
   
-    // release all work requests for the statement
-    if (context_->getSessionDefaults()->getAltpriEsp())
-      releaseTransaction(TRUE, TRUE);
-    else
       releaseTransaction(TRUE, FALSE);
 
     setState(CLOSE_);
@@ -2020,76 +2018,70 @@ Statement * Statement::getCurrentOfCursorStatement(char * cursorName)
 }
 
 RETCODE Statement::doHiveTableSimCheck(TrafSimilarityTableInfo *si,
-                                       ExLobGlobals * lobGlob,
                                        NABoolean &simCheckFailed,
                                        ComDiagsArea &diagsArea)
 {
   simCheckFailed = FALSE;
-  Lng32 retcode = 0;
 
   if ((si->hdfsRootDir() == NULL) || (si->modTS() == -1))
     return SUCCESS;
+ 
+  char *tmpBuf = new (&heap_) char[ComMAX_3_PART_EXTERNAL_UTF8_NAME_LEN_IN_BYTES+6];
+  Lng32 numParts = 0;
+  char *parts[4];
+  Int64 redefTime;
 
-  Int64 failedModTS = -1;
-  Lng32 failedLocBufLen = 1000;
-  char failedLocBuf[failedLocBufLen];
-  retcode = ExpLOBinterfaceDataModCheck
-    (lobGlob,
-     si->hdfsRootDir(),
-     si->hdfsHostName(),
-     si->hdfsPort(),
-     si->modTS(),
-     si->numPartnLevels(),
-     failedModTS,
-     failedLocBuf, failedLocBufLen);
-  if (retcode < 0)
-    {
-      Lng32 intParam1 = -retcode;
-      diagsArea << DgSqlCode(-EXE_ERROR_FROM_LOB_INTERFACE)
-                << DgString0("HDFS")
-                << DgString1("ExpLOBInterfaceDataModCheck")
-                << DgString2(getLobErrStr(intParam1))
-                << DgInt0(intParam1)
-                << DgInt1(0);
-      if (intParam1 == LOB_DATA_READ_ERROR)
-        {
-          if ((failedLocBufLen > 0) && (strlen(failedLocBuf) > 0))
-            {
-              char errBuf[strlen(si->tableName()) + 100 + failedLocBufLen];
-              snprintf(errBuf,sizeof(errBuf), "%s (fileLoc: %s)", si->tableName(), failedLocBuf);
-              diagsArea << DgSqlCode(-EXE_TABLE_NOT_FOUND)
-                        << DgString0(errBuf);              
-            }
-          else
-            {
-              diagsArea << DgSqlCode(-EXE_TABLE_NOT_FOUND)
-                        << DgString0(si->tableName());
-            }
-          simCheckFailed = TRUE;
-        }
-
-      return ERROR;
-    }
-
-  if (retcode == 1) // check failed
-    {
-      char errStr[2000];
-      /* str_sprintf(errStr, "compiledModTS = %ld, failedModTS = %ld, failedLoc = %s", 
-                  si->modTS(), failedModTS, 
-                  (failedLocBufLen > 0 ? failedLocBuf : si->hdfsRootDir()));*/
-      snprintf(errStr,sizeof(errStr), 
+  LateNameInfo::extractParts(si->tableName(), tmpBuf, numParts, parts, FALSE);
+  switch (numParts) {
+     case 1:
+        parts[2] = parts[0];
+        parts[1] = (char *)"default";
+        parts[0] = (char *)"HIVE";
+        break;
+     case 2:
+        parts[2] = parts[1];
+        parts[1] = parts[0];
+        parts[0] = (char *)"HIVE";
+        break;
+     case 3:
+        break;
+     default:
+        diagsArea << DgSqlCode(-24114);
+        return ERROR;
+  }
+  if (stricmp(parts[1], "HIVE") == 0)
+     parts[1] = (char *)"default";
+  HVC_RetCode hvcRetcode = HiveClient_JNI::getRedefTime(parts[1], parts[2], redefTime);
+  if (hvcRetcode == HVC_OK) {
+     if (redefTime > si->modTS()) {
+        simCheckFailed = TRUE;
+        char errStr[strlen(si->tableName()) + 100 + strlen(si->hdfsRootDir())];
+        snprintf(errStr,sizeof(errStr), 
                "compiledModTS = %ld, failedModTS = %ld, failedLoc = %s", 
-               si->modTS(), failedModTS, 
-               (failedLocBufLen > 0 ? failedLocBuf : si->hdfsRootDir()));
-      
-      diagsArea << DgSqlCode(-EXE_HIVE_DATA_MOD_CHECK_ERROR)
-                << DgString0(errStr);
-
-      simCheckFailed = TRUE;
-
-      return ERROR;
-    }
-  
+               si->modTS(), redefTime, 
+               si->hdfsRootDir());
+        diagsArea << DgSqlCode(-EXE_HIVE_DATA_MOD_CHECK_ERROR)
+                  << DgString0(errStr);
+        NADELETEBASIC(tmpBuf, &heap_);
+        return ERROR;
+     }
+  } else if (hvcRetcode == HVC_DONE) {
+      char errBuf[strlen(si->tableName()) + 100 + strlen(si->hdfsRootDir())];
+      snprintf(errBuf,sizeof(errBuf), "%s (fileLoc: %s)", si->tableName(), si->hdfsRootDir());
+      diagsArea << DgSqlCode(-EXE_TABLE_NOT_FOUND)
+                << DgString0(errBuf); 
+      NADELETEBASIC(tmpBuf, &heap_);
+      return ERROR;             
+  } else {
+     diagsArea << DgSqlCode(-1192)
+          << DgString0("HiveClient_JNI::getRedefTime")
+          << DgString1("")
+          << DgInt0(hvcRetcode)
+          << DgString2(getSqlJniErrorStr());
+     NADELETEBASIC(tmpBuf, &heap_);
+     return ERROR; 
+  } 
+  NADELETEBASIC(tmpBuf, &heap_);
   return SUCCESS;
 }
 
@@ -2107,8 +2099,6 @@ RETCODE Statement::doQuerySimilarityCheck(TrafQuerySimilarityInfo * qsi,
       (qsi->siList()->numEntries() == 0))
     return SUCCESS;
 
-  ExLobGlobals * lobGlob = NULL; //getRootTcb()->getGlobals()->getExLobGlobal();
-  NABoolean lobGlobInitialized = FALSE;
   qsi->siList()->position();
   for (Lng32 i = 0; i < qsi->siList()->numEntries(); i++)
     {
@@ -2118,16 +2108,7 @@ RETCODE Statement::doQuerySimilarityCheck(TrafQuerySimilarityInfo * qsi,
       simCheckFailed = FALSE;
       if (si->isHive())
         {
-          if ((NOT lobGlobInitialized) &&
-              (lobGlob == NULL))
-            {
-              ExpLOBinterfaceInit
-                (lobGlob, &heap_, context_,
-                 FALSE, si->hdfsHostName(), si->hdfsPort());
-              lobGlobInitialized = TRUE;
-            }
-
-          retcode = doHiveTableSimCheck(si, lobGlob, simCheckFailed, diagsArea);
+          retcode = doHiveTableSimCheck(si,simCheckFailed, diagsArea);
           if (retcode == ERROR)
             {
               goto error_return; // diagsArea is set
@@ -2135,13 +2116,9 @@ RETCODE Statement::doQuerySimilarityCheck(TrafQuerySimilarityInfo * qsi,
         }
     } // for
 
-  if (lobGlob)
-    ExpLOBinterfaceCleanup(lobGlob);
   return SUCCESS;
   
  error_return:
-  if (lobGlob)
-    ExpLOBinterfaceCleanup(lobGlob);
   return ERROR;
 }
 
@@ -2231,13 +2208,6 @@ RETCODE Statement::fixup(CliGlobals * cliGlobals, Descriptor * input_desc,
   // QStuff __
 
   retcode = root_tcb->fixup();
-
-  // fixup is done. restore esp priority to its execute priority if master
-  // is not changing esp's priority by sending msgs.
-  short rc = statementGlobals_->getRtFragTable()->restoreEspPriority();
-  if (rc)
-    {
-    }
 
   if (retcode)
     {
@@ -3113,47 +3083,6 @@ RETCODE Statement::execute(CliGlobals * cliGlobals, Descriptor * input_desc,
             // had to temporarily turn it off.
             commitImplicitTransAndResetTmodes();
 
-
-	    // before executing the statement, change master priority to
-	    // be the same as ESP priority.
-            SessionDefaults *sessionDefaults =
-              statementGlobals_->getContext()->getSessionDefaults();
-	    if (sessionDefaults->getAltpriMaster() ||
-		sessionDefaults->getAltpriMasterSeqExe())
-	      {
-		// if session default altpri_master is set, then:
-		//   -- always altpr parallel queries
-		//   -- altpri sequential queries if ALTPRI_MASTER is set in 
-		//      root tdb
-		ExRtFragTable *fragTable = statementGlobals_->getRtFragTable();
-                if (sessionDefaults->getAltpriMasterSeqExe() ||
-		    (fragTable &&
-                     fragTable->getState() != ExRtFragTable::NO_ESPS_USED))
-		  {
-		    IpcPriority myPriority = statementGlobals_->getMyProcessPriority();
-		    IpcPriority espPriority;
-		    if (sessionDefaults->getEspPriority() > 0)
-		      espPriority = sessionDefaults->getEspPriority();
-		    else if (sessionDefaults->getEspPriorityDelta() != 0)
-		      espPriority = myPriority +
-                        sessionDefaults->getEspPriorityDelta();
-		    else
-		      espPriority = myPriority;
-		    
-		    if ((espPriority > 200) ||
-			(espPriority < 1))
-		      espPriority = myPriority;
-		    
-		    // change master priority to be the same as ESP.
-		    // Do this only for root cli level
-		    if ((context_->getNumOfCliCalls() == 1) &&
-			(myPriority != espPriority))
-		      {
-			ComRtSetProcessPriority(espPriority, FALSE);
-			statementGlobals_->getCliGlobals()->setPriorityChanged(TRUE);
-		      }
-		  }
-              }
 	    NABoolean parentIsCanceled = updateChildQid();
 	    if (parentIsCanceled)
 	    {
@@ -3161,142 +3090,7 @@ RETCODE Statement::execute(CliGlobals * cliGlobals, Descriptor * input_desc,
 	      state_ = ERROR_;
 	      break;
 	    }
-	    //decide if this query needs to be monitored by WMS
-	    NABoolean monitorThisQuery = FALSE;
-	    // If there is no parent qid then filter out certain query types before monitoring
-	    if (!getParentQid())
-	    {
-	    	if ((root_tdb->getWmsMonitorQuery()) &&
-	    			(root_tdb->getQueryType() != SQL_CONTROL) &&
-	    			(root_tdb->getQueryType() != SQL_SET_TRANSACTION) &&
-	    			(root_tdb->getQueryType() != SQL_SET_CATALOG) &&
-	    			(root_tdb->getQueryType() != SQL_SET_SCHEMA) &&
-	    			(root_tdb->getSubqueryType() != SQL_DESCRIBE_QUERY) &&
-	    			(root_tdb->getQueryType() != SQL_SELECT_UNIQUE) &&
-	    			(root_tdb->getQueryType() != SQL_INSERT_UNIQUE) &&
-	    			(root_tdb->getQueryType() != SQL_UPDATE_UNIQUE) &&
-	    			(root_tdb->getQueryType() != SQL_DELETE_UNIQUE) &&
-	    			(root_tdb->getQueryType() != SQL_OTHER) &&
-		                (stmt_type != STATIC_STMT) &&
-		                (getUniqueStmtId())
-	    	)
-	    	{
-	    		monitorThisQuery = TRUE;
-			if (stmtStats_)
-			  stmtStats_->setWMSMonitoredCliQuery(TRUE);
-	    	}
-	    }
-	    else
-	    {
-	    	//There is a parent qid associated with this query
 
-	    	// If the query is a call statement don't monitor. mxosrvr
-	    	//will monitor all call statements as well as DML statements
-	    	// issued by SPJ body.
-	    	if ((root_tdb->getQueryType() == SQL_CALL_NO_RESULT_SETS) ||
-	    			(root_tdb->getQueryType() == SQL_CALL_WITH_RESULT_SETS) ||
-	    			(root_tdb->getQueryType() == SQL_SP_RESULT_SET))
-	    	{
-	    		monitorThisQuery = FALSE;
-	    	}
-	    	// If the CQD WMS_CHILD_MONITOR_QUERY is TRUE
-
-	    	// For ExeUtil queries ,also check if the prepare flag is set
-	    	// and only then monitor it.
-	    	else if (root_tdb->getQueryType() == SQL_EXE_UTIL  )
-	    	{
-	    		if (root_tdb->getWmsChildMonitorQuery() && wmsMonitorQuery())
-			  {
-	    			monitorThisQuery = TRUE;
-				if (stmtStats_)
-				  stmtStats_->setWMSMonitoredCliQuery(TRUE);
-			  }
-	    	}
-	    	else
-	    		// These are queries issued by internal callers.
-	    		//The prepare flag is not set for these so simply
-	    		// filter out simple queries and monitor it.
-	    		if ( root_tdb->getWmsChildMonitorQuery() &&
-	    				(root_tdb->getQueryType() != SQL_CONTROL) &&
-	    				(root_tdb->getQueryType() != SQL_SET_TRANSACTION) &&
-	    				(root_tdb->getQueryType() != SQL_SET_CATALOG) &&
-	    				(root_tdb->getQueryType() != SQL_SET_SCHEMA) &&
-	    				(root_tdb->getSubqueryType() != SQL_DESCRIBE_QUERY) &&
-	    				(root_tdb->getQueryType() != SQL_SELECT_UNIQUE) &&
-	    				(root_tdb->getQueryType() != SQL_INSERT_UNIQUE) &&
-	    				(root_tdb->getQueryType() != SQL_UPDATE_UNIQUE) &&
-	    				(root_tdb->getQueryType() != SQL_DELETE_UNIQUE) &&
-	    				(root_tdb->getQueryType() != SQL_OTHER) &&
-			                (stmt_type != STATIC_STMT) &&
-			                (getUniqueStmtId())
-			     )
-			  {
-			    monitorThisQuery = TRUE;
-			    if (stmtStats_)
-			      stmtStats_->setWMSMonitoredCliQuery(TRUE);
-			  }
-	    }
-	      
-	    if (monitorThisQuery)
-	      {
-		SQL_QUERY_COST_INFO query_cost_info;
-		SQL_QUERY_COMPILER_STATS_INFO query_comp_stats_info;
-		query_cost_info.cpuTime   = 0;
-		query_cost_info.ioTime    = 0;
-		query_cost_info.msgTime   = 0;
-		query_cost_info.idleTime  = 0;
-		query_cost_info.totalTime = 0;
-		query_cost_info.cardinality = 0;
-		query_cost_info.estimatedTotalMem  = 0;
-		query_cost_info.resourceUsage = 0;
-                query_cost_info.maxCpuUsage = 0;
-		if (getRootTdb())
-		  {
-		    if (getRootTdb()->getQueryCostInfo())
-		      {
-                        getRootTdb()->getQueryCostInfo()->translateToExternalFormat(&query_cost_info);
-		      }
-		
-		  }
-		else
-		  query_cost_info.totalTime = getRootTdb()->getCost();
-
-	      
-		if (getRootTdb())
-		  {
-		    CompilerStatsInfo *cmpStatsInfo = 
-		      getRootTdb()->getCompilerStatsInfo();
-
-		    if (cmpStatsInfo)
-		      {
-			short xnNeeded = (transactionReqd() ? 1 : 0);
-			cmpStatsInfo->translateToExternalFormat(&query_comp_stats_info,xnNeeded);
-			// CompilationStatsData. 
-			CompilationStatsData *cmpData = 
-			  getRootTdb()->getCompilationStatsData();
-
-
-			SQL_COMPILATION_STATS_DATA *query_cmp_data = 
-			  &query_comp_stats_info.compilationStats;
-  
-			if( cmpData )
-			  {
-                           Int64 cmpStartTime = -1;
-                           Int64 cmpEndTime = NA_JulianTimestamp();
-                           if (masterStats != NULL)
-                              cmpStartTime = masterStats->getCompStartTime();
-			    cmpData->translateToExternalFormat(query_cmp_data,
-                                        cmpStartTime, cmpEndTime);
-                            setCompileEndTime(cmpEndTime);
-			  }   
-		      }
-
-		  }
-	      }	
-
-            // done deciding if this query needs to be monitored and 
-            // registered with WMS.
-            // now execute it.
             if (masterStats != NULL)
               {
                 masterStats->setIsBlocking();
@@ -3725,6 +3519,10 @@ RETCODE Statement::fetch(CliGlobals * cliGlobals, Descriptor * output_desc,
     {
       StmtDebug3("[END fetch] %p, result is %s, stmt state %s", this,
 		     RetcodeToString(ERROR), stmtState(getState()));
+      // In case there is a commit conflict, we need to reset the rowcount 
+      // since none of the rows would have got committed. 
+      diagsArea.setRowCount(0);
+      stmtStats_->getMasterStats()->setRowsAffected(0);
       return ERROR;
     }
 
@@ -3746,15 +3544,6 @@ RETCODE Statement::fetch(CliGlobals * cliGlobals, Descriptor * output_desc,
  
   else
     {
-      // change priority back to fixup state, if asked for.
-      if ((context_->getSessionDefaults()->getAltpriFirstFetch()) &&
-	  (context_->getNumOfCliCalls() == 1) &&
-	  (cliGlobals->priorityChanged()))
-	{
-	  ComRtSetProcessPriority(cliGlobals->myPriority(), FALSE);
-	  cliGlobals->setPriorityChanged(FALSE);
-	}
-
       setState(FETCH_);
 
       if (getRootTdb()->updatableSelect())
@@ -4891,7 +4680,15 @@ short Statement::commitTransaction(ComDiagsArea &diagsArea)
       // get current context and close all statements
       // started under the current transaction
       context_->closeAllCursors(ContextCli::CLOSE_ALL, ContextCli::CLOSE_CURR_XN);
-
+      // Capture any errors that happened and return eg. transaction 
+      // related errors that happen during 
+      // Statement::close-> ExTransaction::commitTransaction that get called 
+      // in ::closeAllCursors
+      if (diagsArea.mainSQLCODE() <0)
+        {
+          return ERROR;
+        }
+      
       // if transaction is still active(it may have been committed at
       // close cursor time if auto commit is on), commit it.
       if (context_->getTransaction()->xnInProgress())
@@ -4899,10 +4696,7 @@ short Statement::commitTransaction(ComDiagsArea &diagsArea)
 	  StmtDebug2("  About to COMMIT, stmt %p, tx %s...", this,
 		     TransIdToText(statementGlobals_->getTransid()));
 	  // do waited commit for DDL queries
-	  NABoolean waited = FALSE;
-	  //if (root_tdb->ddlQuery())
-	  //	    waited = TRUE;
-	  short taRetcode = context_->commitTransaction(waited);
+	  short taRetcode = context_->commitTransaction();
 	  
           StmtDebug1("  Return code is %d", (Lng32) taRetcode);
       

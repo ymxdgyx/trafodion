@@ -246,9 +246,24 @@ CmpSeabaseDDLauth::AuthStatus CmpSeabaseDDLauth::getAuthDetails(Int32 authID)
   }
 }
 
+// ----------------------------------------------------------------------------
+// public method:  getRoleIDs
+//
+// Return the list of roles that granted to the passed in authID
+//
+// Input:
+//    authID - the database authorization ID to search for
+//
+//  Output:
+//    A returned parameter:
+//       STATUS_GOOD: list of roles returned
+//       STATUS_NOTFOUND: no roles were granted
+//       STATUS_ERROR: error was returned, diags area populated
+// ----------------------------------------------------------------------------
 CmpSeabaseDDLauth::AuthStatus CmpSeabaseDDLauth::getRoleIDs(
   const Int32 authID,
-  std::vector<int32_t> &roleIDs)
+  std::vector<int32_t> &roleIDs,
+  std::vector<int32_t> &grantees)
 {
   NAString privMgrMDLoc;
   CONCAT_CATSCH(privMgrMDLoc,systemCatalog_.data(),SEABASE_PRIVMGR_SCHEMA);
@@ -257,11 +272,13 @@ CmpSeabaseDDLauth::AuthStatus CmpSeabaseDDLauth::getRoleIDs(
                     std::string(privMgrMDLoc.data()),
                     CmpCommon::diags());
   std::vector<std::string> roleNames;
-  std::vector<int32_t> roleDepths;
+  std::vector<int32_t> grantDepths;
 
-  if (role.fetchRolesForUser(authID,roleNames,roleIDs,roleDepths) == PrivStatus::STATUS_ERROR)
+  if (role.fetchRolesForAuth(authID,roleNames,roleIDs,grantDepths,grantees) == PrivStatus::STATUS_ERROR)
     return STATUS_ERROR;
-  return STATUS_GOOD; 
+
+  assert (roleIDs.size() == grantees.size());
+  return STATUS_GOOD;
 }
 
 // ----------------------------------------------------------------------------
@@ -358,7 +375,7 @@ Int32 CmpSeabaseDDLauth::getUniqueAuthID(
   Int32 len = snprintf(buf, 300,
                        "SELECT [FIRST 1] auth_id FROM (SELECT auth_id, "
                        "LEAD(auth_id) OVER (ORDER BY auth_id) L FROM %s.%s ) "
-                       "WHERE L - auth_id > 1 and auth_id >= %d ",
+                       "WHERE (L - auth_id > 1 or L is null) and auth_id >= %d ",
                        MDSchema_.data(),SEABASE_AUTHS, minValue);
   assert (len <= 300);
   
@@ -1207,20 +1224,22 @@ void CmpSeabaseDDLuser::unregisterUser(StmtDDLRegisterUser * pNode)
       return;
     }
     
-    // User does not own any roles, but may have been granted roles.
     NAString privMgrMDLoc;
-
     CONCAT_CATSCH(privMgrMDLoc,systemCatalog_.data(),SEABASE_PRIVMGR_SCHEMA);
-    
-    PrivMgrRoles role(std::string(MDSchema_.data()),
-                      std::string(privMgrMDLoc.data()),
-                      CmpCommon::diags());
-    
-    if (CmpCommon::context()->isAuthorizationEnabled() &&
-        role.isUserGrantedAnyRole(getAuthID()))
+
+    // User does not own any roles, but may have been granted roles.
+    if (CmpCommon::context()->isAuthorizationEnabled())
     {
-       *CmpCommon::diags() << DgSqlCode(-CAT_NO_UNREG_USER_GRANTED_ROLES);
-       return;
+    
+      PrivMgrRoles role(std::string(MDSchema_.data()),
+                        std::string(privMgrMDLoc.data()),
+                        CmpCommon::diags());
+    
+      if (role.isUserGrantedAnyRole(getAuthID()))
+      {
+         *CmpCommon::diags() << DgSqlCode(-CAT_NO_UNREG_USER_GRANTED_ROLES);
+         return;
+      }
     }
     
     // Does user own any objects?
@@ -1249,32 +1268,39 @@ void CmpSeabaseDDLuser::unregisterUser(StmtDDLRegisterUser * pNode)
        return;
     }
                 
-    PrivMgr privMgr(std::string(privMgrMDLoc),CmpCommon::diags());
-    std::vector<PrivClass> privClasses;
-    
-    privClasses.push_back(PrivClass::ALL);
-    
-    std::vector<int64_t> objectUIDs;
-    if (privMgr.isAuthIDGrantedPrivs(getAuthID(),privClasses, objectUIDs))
+    // Is user granted any privileges?
+    if (CmpCommon::context()->isAuthorizationEnabled())
     {
-       NAString objectName = getObjectName(objectUIDs);
-       if (objectName.length() > 0)
-       {
-          *CmpCommon::diags() << DgSqlCode(-CAT_NO_UNREG_USER_HAS_PRIVS)
-                              << DgString0(dbUserName.data())
-                              << DgString1(objectName.data());
+      PrivMgr privMgr(std::string(privMgrMDLoc),CmpCommon::diags());
+      std::vector<PrivClass> privClasses;
+    
+      privClasses.push_back(PrivClass::ALL);
+    
+      std::vector<int64_t> objectUIDs;
+      if (privMgr.isAuthIDGrantedPrivs(getAuthID(),privClasses, objectUIDs))
+      {
+         NAString objectName = getObjectName(objectUIDs);
+         if (objectName.length() > 0)
+         {
+            *CmpCommon::diags() << DgSqlCode(-CAT_NO_UNREG_USER_HAS_PRIVS)
+                                << DgString0(dbUserName.data())
+                                << DgString1(objectName.data());
 
-          return;
-       }
+            return;
+         }
+      }
     }
     
     // remove any component privileges granted to this user
-    PrivMgrComponentPrivileges componentPrivileges(privMgrMDLoc.data(),CmpCommon::diags());
-    std::string componentUIDString = "1";
-    if (!componentPrivileges.dropAllForGrantee(getAuthID()))
+    if (CmpCommon::context()->isAuthorizationEnabled())
     {
-      UserException excp (NULL, 0);
-      throw excp;
+      PrivMgrComponentPrivileges componentPrivileges(privMgrMDLoc.data(),CmpCommon::diags());
+      std::string componentUIDString = "1";
+      if (!componentPrivileges.dropAllForGrantee(getAuthID()))
+      {
+        UserException excp (NULL, 0);
+        throw excp;
+      }
     }
 
     // delete the row
@@ -1811,16 +1837,15 @@ bool CmpSeabaseDDLrole::describe(
       std::vector<std::string> granteeNames;
       std::vector<int32_t> grantDepths;
       std::vector<int32_t> grantorIDs;
-      
-      PrivStatus privStatus = PrivStatus::STATUS_GOOD;
-      
-      privStatus = roles.fetchUsersForRole(getAuthID(),granteeNames,
-                                           grantorIDs,grantDepths);
-      
-      // If no users were granted this role, nothing to do.                                     
+
+
+      PrivStatus privStatus = roles.fetchGranteesForRole(getAuthID() ,granteeNames,
+                                                         grantorIDs,grantDepths);
+
+      // If nobody was granted this role, nothing to do.                                     
       if (privStatus == PrivStatus::STATUS_NOTFOUND || granteeNames.size() == 0)
          return true;
-         
+
       if (privStatus == PrivStatus::STATUS_ERROR)                                   
          SEABASEDDL_INTERNAL_ERROR("Could not fetch users granted role.");
          

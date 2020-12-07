@@ -344,8 +344,8 @@ Lng32 HSSqTableDef::DescribeColumnNames()
                                             (Lng32*)&colInfo_[i].colCollation, 0, 0, 0, 0);
             HSHandleError(retcode_);
           }
-        else if ((colInfo_[i].datatype >= REC_MIN_BINARY &&  // May be type NUMERIC
-                  colInfo_[i].datatype <= REC_MAX_BINARY)    //    instead of INT
+        else if ((colInfo_[i].datatype >= REC_MIN_BINARY_NUMERIC &&  // May be type NUMERIC
+                  colInfo_[i].datatype <= REC_MAX_BINARY_NUMERIC)    //    instead of INT
                      ||
                  (colInfo_[i].datatype >= REC_MIN_DECIMAL &&
                  colInfo_[i].datatype <= REC_MAX_DECIMAL))
@@ -532,7 +532,7 @@ Int64 HSTableDef::getRowCountUsingSelect()
 
   NAString query  = "SELECT COUNT(*) FROM ";
   query += getTableName(getObjectFullName(), getNameSpace());
-  query += " FOR READ UNCOMMITTED ACCESS;";
+  query += " FOR SKIP CONFLICT ACCESS;";
 
   if (cursor.fetchNumColumn(query, NULL, &rows) < 0) 
      rows = -1; // Error
@@ -907,7 +907,7 @@ NABoolean HSHiveTableDef::objExists(NABoolean createExternalTable)
   HiveMetaData* hiveMetaDB;
   if (CmpCommon::getDefault(HIVE_USE_FAKE_TABLE_DESC) != DF_ON)
     {
-      hiveMetaDB = new(STMTHEAP) HiveMetaData();
+      hiveMetaDB = new(STMTHEAP) HiveMetaData(STMTHEAP);
 
       if (!hiveMetaDB->init())
         {
@@ -922,13 +922,14 @@ NABoolean HSHiveTableDef::objExists(NABoolean createExternalTable)
         }
     }
   else
-    hiveMetaDB = new(STMTHEAP) HiveMetaData(); // fake metadata
+    hiveMetaDB = new(STMTHEAP) HiveMetaData(STMTHEAP); // fake metadata
 
   if (!HSGlobalsClass::isHiveCat(*catalog_))
     {
       *CmpCommon::diags()
           << DgSqlCode(-1388)
-          << DgTableName(*object_);
+          << DgString0("Object")
+          << DgString1(*object_);
       return FALSE;
     }
 
@@ -947,7 +948,11 @@ NABoolean HSHiveTableDef::objExists(NABoolean createExternalTable)
   if (CmpCommon::getDefault(HIVE_USE_FAKE_TABLE_DESC) == DF_ON)
     hiveTblDesc_ = hiveMetaDB->getFakedTableDesc(obj.data());
   else
-    hiveTblDesc_ = hiveMetaDB->getTableDesc(sch.data(), obj.data());
+    hiveTblDesc_ = hiveMetaDB->getTableDesc(sch.data(), obj.data(),
+                FALSE,
+                // reread Hive Table Desc from MD.
+                (CmpCommon::getDefault(TRAF_RELOAD_NATABLE_CACHE) == DF_ON),
+                TRUE);
 
   if (!hiveTblDesc_)
   {
@@ -955,7 +960,8 @@ NABoolean HSHiveTableDef::objExists(NABoolean createExternalTable)
     {
       *CmpCommon::diags()
         << DgSqlCode(-1388)
-        << DgTableName(*object_);
+        << DgString0("Object")
+        << DgString1(*object_);
     }
     else
     {
@@ -1370,7 +1376,10 @@ void HSTableDef::addTruncatedSelectList(NAString & qry)
         if (DFS2REC::isLOB(getColInfo(i).datatype)) // skip LOB columns
           continue;
 
-        if (!ComTrafReservedColName(*getColInfo(i).colname))
+        // skip derived column names (e.g. "_SALT_", "_DIVISION_n_")
+        // but only in Trafodion tables
+        if ((getTblOrigin() != HBASE_TBL) ||
+            (!ComTrafReservedColName(*getColInfo(i).colname)))
           {
             if (!first)
               qry += ", ";
@@ -1380,4 +1389,26 @@ void HSTableDef::addTruncatedSelectList(NAString & qry)
           }
       }
   }
+
+//
+// METHOD:  allUserColumnsAreLOBs()
+//
+// PURPOSE: Determines if all user columns are LOBs. If so,
+//          returns TRUE. Otherwise, returns FALSE.
+//
+NABoolean HSTableDef::allUserColumnsAreLOBs()
+  {
+    for (Int32 i = 0; i < numCols_; i++)
+      {
+        if (!DFS2REC::isLOB(colInfo_[i].datatype))
+          {
+            if (strcmp(*colInfo_[i].colname,"SYSKEY") != 0) // SYSKEY is not a user column
+              return FALSE;
+            // we don't need to check for "_SALT_" or divisioning columns
+            // since those could only be present if there were user key columns
+          }
+      }
+    return TRUE;
+  }
+
 

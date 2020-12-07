@@ -49,10 +49,14 @@ enum LOBcliQueryType
   {
     LOB_CLI_INIT,
 
-    // create the desc table
+    // create the desc tables
     LOB_CLI_CREATE,
 
-    // drops the desc table
+    // alter the MD table and create LOB desc tables
+    LOB_CLI_ALTER,
+    
+
+    // drops the desc tables
     LOB_CLI_DROP,
 
     // cleanup LOBs. Cant use CLI_DROP as MD may be in an inconsistent state.
@@ -171,7 +175,9 @@ Lng32 SQL_EXEC_LOBddlInterface
  /*IN*/     Int64 lobMaxSize,
  /*IN*/     NABoolean lobTrace
  );
-
+Lng32 SQL_EXEC_SetLobLock(/* IN */   char *llid);
+Lng32 SQL_EXEC_ReleaseLobLock(/* IN */ char *llid);
+Lng32 SQL_EXEC_CheckLobLock(/* IN */   char *llid, /* IN */ Int32 *found);
 
   /***************************************************************************
     Called by loader to load or extract buffers of data.

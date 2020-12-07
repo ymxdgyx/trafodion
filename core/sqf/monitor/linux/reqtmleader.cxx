@@ -28,11 +28,13 @@
 #include "montrace.h"
 #include "monsonar.h"
 #include "monlogging.h"
+#include "nameserver.h"
 
 extern CMonStats *MonStats;
 extern CNode *MyNode;
 extern CNodeContainer *Nodes;
 extern CMonitor *Monitor;
+extern bool NameServerEnabled;
 
 CExtTmLeaderReq::CExtTmLeaderReq (reqQueueMsg_t msgType, int pid,
                                   struct message_def *msg )
@@ -117,11 +119,27 @@ void CExtTmLeaderReq::performRequest()
             Monitor->ExitSyncCycle();
         }
 
+        if (trace_settings & (TRACE_INIT | TRACE_RECOVERY | TRACE_REQUEST | TRACE_SYNC | TRACE_TMSYNC))
+        {
+            trace_printf( "%s@%d - tmLeaderNid=%d\n"
+                        , method_name, __LINE__, tmLeaderNid );
+        }
+
         if ( MyNode->GetShutdownLevel() == ShutdownLevel_Undefined )
         {
             CProcess *process;
 
             process = Nodes->GetLNode(tmLeaderNid)->GetProcessLByType( ProcessType_DTM );
+            if (!process && NameServerEnabled)
+            {
+                if (trace_settings & (TRACE_INIT | TRACE_RECOVERY | TRACE_REQUEST | TRACE_SYNC | TRACE_TMSYNC))
+                {
+                    trace_printf( "%s@%d - Getting process from Name Server, nid=%d, type=ProcessType_DTM\n"
+                                , method_name, __LINE__, tmLeaderNid );
+                }
+            
+                process = Nodes->GetProcessLByTypeNs( tmLeaderNid, ProcessType_DTM );
+            }
 
             if (!process)
             {
@@ -142,14 +160,42 @@ void CExtTmLeaderReq::performRequest()
                 }
             }
 
-            assert(process); 
+            if (process)
+            {
+                // populate the TM leader process info
+                msg_->u.reply.type = ReplyType_Generic;
+                msg_->u.reply.u.generic.nid = process->GetNid();
+                msg_->u.reply.u.generic.pid = process->GetPid();
+                msg_->u.reply.u.generic.verifier = process->GetVerifier();
+                strcpy (msg_->u.reply.u.generic.process_name, process->GetName());
+            }
+            else
+            {
+                tmLeaderNid = -1;
+                msg_->u.reply.type = ReplyType_Generic;
+                msg_->u.reply.u.generic.nid = -1;
+                msg_->u.reply.u.generic.pid = -1;
+                msg_->u.reply.u.generic.verifier = -1;
+                msg_->u.reply.u.generic.process_name[0] = 0;
+            }
 
-            // populate the TM leader process info
-            msg_->u.reply.type = ReplyType_Generic;
-            msg_->u.reply.u.generic.nid = process->GetNid();
-            msg_->u.reply.u.generic.pid = process->GetPid();
-            msg_->u.reply.u.generic.verifier = process->GetVerifier();
-            strcpy (msg_->u.reply.u.generic.process_name, process->GetName());
+            if (process && NameServerEnabled)
+            {
+                if (!MyNode->IsMyNode( process->GetNid() ))
+                {
+                    if (trace_settings & (TRACE_INIT | TRACE_RECOVERY | TRACE_REQUEST | TRACE_SYNC | TRACE_TMSYNC))
+                    {
+                        trace_printf( "%s@%d - Deleting clone process %s, (%d,%d:%d)\n"
+                                    , method_name, __LINE__
+                                    , process->GetName()
+                                    , process->GetNid()
+                                    , process->GetPid()
+                                    , process->GetVerifier() );
+                    }
+                    Nodes->DeleteCloneProcess( process );
+                }
+            
+            }
         }
         else
         {

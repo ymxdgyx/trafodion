@@ -403,6 +403,11 @@ void NAType::print(FILE* ofd, const char* indent)
 #endif
 }
 
+void NAType::display()
+{
+  std::cout << getTypeSQLname().data() << std::endl;
+}
+
 // -- The external name for the type (text representation)
 
 NAString NAType::getTypeSQLname(NABoolean) const
@@ -634,6 +639,11 @@ Lng32 NAType::getDisplayLength(Lng32 datatype,
       d_len = SQL_BOOLEAN_DISPLAY_SIZE;
       break;
 
+    case REC_BINARY_STRING:
+    case REC_VARBINARY_STRING:
+      d_len = length;
+      break;
+
     default:
       d_len = length;
       break;
@@ -690,7 +700,15 @@ short NAType::getMyTypeAsHiveText(NAString * outputStr/*out*/) const
   switch (fs_datatype)
     {
     case REC_MIN_F_CHAR_H ... REC_MAX_F_CHAR_H:
-      *outputStr = "string";
+      {
+        SQLChar * ct = (SQLChar*)this;
+        char buf[20];
+        Int32 size = ct->getStrCharLimit();
+        str_itoa(size, buf);
+        *outputStr = "char(";
+        *outputStr += buf;
+        *outputStr += ")";
+      }
       break;
 
     case REC_MIN_V_CHAR_H ... REC_MAX_V_CHAR_H:
@@ -698,7 +716,7 @@ short NAType::getMyTypeAsHiveText(NAString * outputStr/*out*/) const
         SQLVarChar * ct = (SQLVarChar*)this;
         if (ct->wasHiveString())
           *outputStr = "string";
-        else
+        else if (DFS2REC::isCharacterString(fs_datatype))
           {
             char buf[20];
             // Hive doesn't have the "n bytes" notation,
@@ -709,6 +727,8 @@ short NAType::getMyTypeAsHiveText(NAString * outputStr/*out*/) const
             *outputStr += buf;
             *outputStr += ")";
           }
+        else
+          *outputStr = "binary";
       }
       break;
 
@@ -990,6 +1010,17 @@ NAType* NAType::getNATypeForHive(const char* hiveType, NAMemory* heap)
       return nat;
     }
   
+  if ( !strcmp(hiveType, "binary"))
+    {
+      Int32 len = CmpCommon::getDefaultLong(HIVE_MAX_BINARY_LENGTH);
+      NAType * nat = NULL;
+      if (CmpCommon::getDefault(TRAF_BINARY_SUPPORT) == DF_OFF)
+        nat = new (heap) SQLVarChar(heap, len);
+      else
+        nat = new (heap) SQLBinaryString(heap, len, TRUE, TRUE);
+      return nat;
+    }
+
   if ( !strcmp(hiveType, "float"))
     return new (heap) SQLReal(heap, TRUE /* allow NULL*/);
 
@@ -997,7 +1028,7 @@ NAType* NAType::getNATypeForHive(const char* hiveType, NAMemory* heap)
     return new (heap) SQLDoublePrecision(heap, TRUE /* allow NULL*/);
 
   if ( !strcmp(hiveType, "timestamp"))
-    return new (heap) SQLTimestamp(heap, TRUE /* allow NULL */ , 6);
+    return new (heap) SQLTimestamp(heap, TRUE /* allow NULL */ , DatetimeType::MAX_FRACTION_PRECISION);
 
   if ( !strcmp(hiveType, "date"))
     return new (heap) SQLDate(heap, TRUE /* allow NULL */);

@@ -25,11 +25,13 @@
 
 using namespace std;
 
+#include <string.h>
 #include "tcdb.h"
 #include "tctrace.h"
 #include "trafconf/trafconfig.h"
 
 bool TcTraceEnabled = false;
+bool TcIsRealCluster = true;
 
 CTrafConfigTrace    TrafConfigTrace;
 CTcdb               TrafConfigDb;
@@ -88,6 +90,11 @@ TC_Export int tc_initialize( bool traceEnabled
         return( TCALREADYINIT );
     }
 
+    if ( getenv( "SQ_VIRTUAL_NODES" ) )
+    {
+        TcIsRealCluster = false;
+    }
+
     TcTraceEnabled = traceEnabled;
     if (TcTraceEnabled)
     {
@@ -114,6 +121,62 @@ TC_Export int tc_initialize( bool traceEnabled
         default:
             rc = TCNOTIMPLEMENTED;
     }
+
+    return( rc );
+}
+
+TC_Export int tc_delete_nameserver( const char *node_name )
+{
+    if ( ! TrafConfigDb.IsInitialized() )
+    {
+        return( TCNOTINIT );
+    }
+
+    int rc = TCDBOPERROR;
+
+    rc = TrafConfigDb.DeleteNameServer( node_name );
+
+    return( rc );
+}
+
+TC_Export int tc_get_nameserver( const char *node_name )
+{
+    if ( ! TrafConfigDb.IsInitialized() )
+    {
+        return( TCNOTINIT );
+    }
+
+    int rc = TCDBOPERROR;
+
+    rc = TrafConfigDb.GetNameServer( node_name );
+
+    return( rc );
+}
+
+TC_Export int tc_get_nameservers( int   *count
+                                , int    max
+                                , char **nodeNames )
+{
+    if ( ! TrafConfigDb.IsInitialized() )
+    {
+        return( TCNOTINIT );
+    }
+
+    int rc = TCDBOPERROR;
+
+    rc = TrafConfigDb.GetNameServers( count, max, nodeNames );
+
+    return( rc );
+}
+
+TC_Export int tc_put_nameserver( const char* node_name )
+{
+    if ( ! TrafConfigDb.IsInitialized() )
+    {
+        return( TCNOTINIT );
+    }
+
+    int rc = TrafConfigDb.AddNameServer( node_name );
 
     return( rc );
 }
@@ -177,8 +240,20 @@ TC_Export int tc_put_node( TcNodeConfiguration_t *node_config )
     }
 
     int rc = TCDBOPERROR;
+    char fqdn_name[TC_PROCESSOR_NAME_MAX];
 
-    rc = TrafConfigDb.AddPNodeData( node_config->node_name
+    if (strlen(node_config->domain_name))
+    {
+        snprintf( fqdn_name, sizeof(fqdn_name), "%s.%s"
+                , node_config->node_name
+                , node_config->domain_name );
+    }
+    else
+    {
+        strncpy( fqdn_name, node_config->node_name, sizeof(fqdn_name) );
+    }
+
+    rc = TrafConfigDb.AddPNodeData( fqdn_name
                                   , node_config->pnid
                                   , node_config->excluded_first_core
                                   , node_config->excluded_last_core );

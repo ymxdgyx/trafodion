@@ -26,7 +26,7 @@
 #
 # Environment Variables
 #
-#   REST_CONF_DIR   Alternate REST conf dir. Default is ${REST_HOME}/conf.
+#   REST_CONF_DIR   Alternate REST conf dir. Default is ${TRAF_CONF}/rest.
 #   REST_LOG_DIR    Where log files are stored.  PWD by default.
 #   REST_PID_DIR    The pid files are stored. ${REST_HOME}/tmp by default.
 #   REST_IDENT_STRING   A string representing this instance. $USER by default
@@ -98,12 +98,12 @@ wait_until_done ()
 
 # get log directory
 if [ "$REST_LOG_DIR" = "" ]; then
-  export REST_LOG_DIR="$REST_HOME/logs"
+  export REST_LOG_DIR="$TRAF_LOG/rest"
 fi
 mkdir -p "$REST_LOG_DIR"
 
 if [ "$REST_PID_DIR" = "" ]; then
-  REST_PID_DIR="$REST_HOME/tmp"
+  REST_PID_DIR="$TRAF_VAR"
 fi
 
 #if [ "$REST_IDENT_STRING" = "" ]; then

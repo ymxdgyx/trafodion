@@ -109,6 +109,7 @@ short BuiltinFunction::codeGen(Generator * generator)
         {
           case CharInfo::ISO88591:
           case CharInfo::UTF8:
+          case CharInfo::BINARY:
           // case CharInfo::SJIS:  // Uncomment this if we ever support SJIS
            function_clause =
                new(generator->getSpace()) ex_like_clause_char(getOperatorType()
@@ -349,6 +350,7 @@ short BuiltinFunction::codeGen(Generator * generator)
         {
           case CharInfo::ISO88591:
           case CharInfo::UTF8:
+          case CharInfo::BINARY:
           // case CharInfo::SJIS:  // Uncomment this if we ever support SJIS
 	   function_clause = new(generator->getSpace()) 
 		ex_function_substring(getOperatorType(), 
@@ -409,6 +411,7 @@ short BuiltinFunction::codeGen(Generator * generator)
         {
           case CharInfo::ISO88591:
           case CharInfo::UTF8:
+          case CharInfo::BINARY:
           // case CharInfo::SJIS: // Uncomment this if we ever support SJIS
 	    function_clause = new(generator->getSpace()) 
 		ex_function_char_length(ITM_CHAR_LENGTH, attr, space);
@@ -443,6 +446,7 @@ short BuiltinFunction::codeGen(Generator * generator)
         {
           case CharInfo::ISO88591:
           case CharInfo::UTF8:
+          case CharInfo::BINARY:
           // case CharInfo::SJIS: // Uncomment this if we ever support SJIS
 	   function_clause = new(generator->getSpace()) 
              ex_function_position(ITM_POSITION, attr, space,
@@ -665,6 +669,7 @@ short BuiltinFunction::codeGen(Generator * generator)
     break;
 
     case ITM_UNIQUE_ID:
+    case ITM_UNIQUE_ID_SYS_GUID:
     case ITM_UNIQUE_SHORT_ID:
       {
 	function_clause =
@@ -713,6 +718,26 @@ short BuiltinFunction::codeGen(Generator * generator)
                                                         CmpCommon::getDefaultNumeric(BLOCK_ENCRYPTION_MODE));
       break;
     }
+
+    case ITM_ENCODE_BASE64:
+    case ITM_DECODE_BASE64:
+      {
+        function_clause =
+          new(generator->getSpace()) ExFunctionBase64EncDec
+          (getOperatorType(),
+           attr,
+           space,
+           (getOperatorType() == ITM_ENCODE_BASE64 ? TRUE : FALSE));
+      }
+      break;
+
+    case ITM_SPLIT_PART:
+    {
+      function_clause = 
+            new (generator->getSpace()) ex_function_split_part(getOperatorType(), attr, space);
+      break;
+    }
+
     default:
       break;
     }
@@ -925,30 +950,37 @@ short RaiseError::codeGen(Generator *generator) {
   
   if (generator->getExpGenerator()->genItemExpr(this, &attr, 1 + getArity(), -1) == 1)
     return 0;
-
+  
   const char * constraintName = NULL;
   const char * tableName  = NULL;
+  const char * optionalStr = NULL;
 
- if (!getConstraintName().isNull()) {
-      constraintName = generator->getSpace()->AllocateAndCopyToAlignedSpace(
-	  			getConstraintName(), 0);
-   }
-
- if (!getTableName().isNull()) {
-      tableName  = generator->getSpace()->AllocateAndCopyToAlignedSpace(
-	    			getTableName(), 0);
-   }
+  if (!getConstraintName().isNull()) {
+    constraintName = generator->getSpace()->AllocateAndCopyToAlignedSpace(
+         getConstraintName(), 0);
+  }
   
- // make raiseError a field in this class. TBD.
- NABoolean raiseError = ((getSQLCODE() > 0) ? TRUE : FALSE);
- ex_clause * function_clause =
+  if (!getTableName().isNull()) {
+    tableName  = generator->getSpace()->AllocateAndCopyToAlignedSpace(
+         getTableName(), 0);
+  }
+  
+  if (!optionalStr_.isNull()) {
+    optionalStr  = generator->getSpace()->allocateAndCopyToAlignedSpace(
+         optionalStr_.data(), optionalStr_.length(), 0);
+  }
+  
+  // make raiseError a field in this class. TBD.
+  NABoolean raiseError = ((getSQLCODE() > 0) ? TRUE : FALSE);
+  ex_clause * function_clause =
     new(generator->getSpace()) ExpRaiseErrorFunction (attr, 
 						      generator->getSpace(),
 						      (raiseError ? getSQLCODE() : - getSQLCODE()),
 						      raiseError,
 						      constraintName,
 						      tableName,
-							  (getArity()==1) ? TRUE : FALSE);  // -- Triggers
+                                                      (getArity()==1) ? TRUE : FALSE,  // -- Triggers
+                                                      optionalStr);
   
   generator->getExpGenerator()->linkClause(this, function_clause);
   
@@ -1967,6 +1999,7 @@ short Trim::codeGen(Generator * generator)
   {
     case CharInfo::ISO88591:
     case CharInfo::UTF8:
+    case CharInfo::BINARY:
     // case CharInfo::SJIS: // Uncomment this if we ever support SJIS
       function_clause = new(generator->getSpace()) 
 		ex_function_trim_char(ITM_TRIM,
@@ -2673,6 +2706,11 @@ short LOBinsert::codeGen(Generator * generator)
   else if(obj_ == LOBoper::EMPTY_LOB_)
     li->setFromEmpty(TRUE);
 
+  if (CmpCommon::getDefault(LOB_LOCKING) == DF_ON)
+    li->setLobLocking(TRUE);
+  else
+    li->setLobLocking(FALSE);
+
   li->lobNum() = lobNum();
   li->setLobStorageType(lobStorageType());
   li->setLobStorageLocation((char*)lobStorageLocation().data());
@@ -2748,7 +2786,10 @@ short LOBupdate::codeGen(Generator * generator)
     lu->setFromBuffer(TRUE);
   else if(obj_ == LOBoper::EMPTY_LOB_)
     lu->setFromEmpty(TRUE);
-
+  if (CmpCommon::getDefault(LOB_LOCKING) == DF_ON)
+    lu->setLobLocking(TRUE);
+  else
+    lu->setLobLocking(FALSE);
   lu->lobNum() = lobNum();
   lu->setLobStorageType(lobStorageType());
   lu->setLobStorageLocation((char*)lobStorageLocation().data());
@@ -2865,6 +2906,8 @@ short SequenceValue::codeGen(Generator * generator)
      attr, 
      *naTable_->getSGAttributes(),
      space);
+
+  sv->setRetryNum(CmpCommon::getDefaultLong(TRAF_SEQUENCE_RETRY_TIMES));
 
   if (cacheSize > 0)
     ((SequenceGeneratorAttributes*)naTable_->getSGAttributes())->setSGCache(origCacheSize);

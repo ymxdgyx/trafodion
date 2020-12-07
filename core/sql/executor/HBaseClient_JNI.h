@@ -29,22 +29,18 @@
 #include "Platform.h"
 #include "Collections.h"
 #include "NABasicObject.h"
-
+#include "ExStats.h"
 #include "JavaObjectInterface.h"
 #include "Hbase_types.h"
 #include "ExpHbaseDefs.h"
 #include "NAMemory.h"
 #include "org_trafodion_sql_HTableClient.h"
 
-// forward declare
-class ExHbaseAccessStats;
-
 using namespace apache::hadoop::hbase::thrift;
 
 namespace {
   typedef std::vector<Text> TextVec;
 }
-
 
 class ContextCli;
 
@@ -467,7 +463,7 @@ public:
   HBC_RetCode estimateRowCount(const char* tblName, Int32 partialRowSize,
                                Int32 numCols, Int32 retryLimitMilliSeconds, NABoolean useCoprocessor,
                                Int64& rowCount, Int32 & breadCrumb);
-  HBC_RetCode getLatestSnapshot(const char * tabname, char *& snapshotName, NAHeap * heap);
+  static HBC_RetCode getLatestSnapshot(const char * tabname, char *& snapshotName, NAHeap * heap);
   HBC_RetCode cleanSnpTmpLocation(const char * path);
   HBC_RetCode setArchivePermissions(const char * path);
   HBC_RetCode getBlockCacheFraction(float& frac);

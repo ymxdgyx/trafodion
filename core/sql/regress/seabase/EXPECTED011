@@ -170,7 +170,6 @@ DESCRIPTION
   embedded_arkcmp ........ used
   IS_SQLCI ............... ON
   LDAP_USERNAME
-  MODE_SEABASE ........... ON
   SEABASE_VOLATILE_TABLES  ON
   HBASE_ASYNC_DROP_TABLE   OFF
   HBASE_SERIALIZATION .... ON
@@ -1294,6 +1293,9 @@ METRIC_QUERY_AGGR_TABLE
 METRIC_QUERY_TABLE
 METRIC_SESSION_TABLE
 METRIC_TEXT_TABLE
+
+=======================
+ 4 row(s) returned
 
 --- SQL operation complete.
 >>invoke trafodion."_REPOS_".metric_query_table;

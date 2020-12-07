@@ -127,7 +127,7 @@ public class TransactionalScanner extends AbstractClientScanner {
             LOG.error(errMsg);
             //throw new IOException(errMsg, e);
         }
-        if (response.getHasException()) {
+        if (response != null && response.getHasException()) {
            String exception = response.getException();
            String errMsg = "closeScanner encountered Exception txID: " +
                         ts.getTransactionId() + " Exception: " + exception;
@@ -179,12 +179,6 @@ public class TransactionalScanner extends AbstractClientScanner {
         //   this.currentEndKey = TransactionManager.binaryIncrementPos(currentRegion.getEndKey(), -1);
 
         this.closed = false;
-
-        // Need to add the next region as a participant to the transaction so it gets phase 1 notification
-        // and does not orphan the TransactionState object in the region that gets created during the scan
-        if (LOG.isTraceEnabled()) LOG.trace("nextScanner() calling RMInterface.registerTransaction for startKey "
-                  +  Hex.encodeHexString(this.currentBeginKey));
-        RMInterface.registerTransaction(ttable, ts, this.currentBeginKey);
 
       TrxRegionProtos.OpenScannerRequest.Builder requestBuilder = OpenScannerRequest.newBuilder();
       requestBuilder.setTransactionId(ts.getTransactionId());

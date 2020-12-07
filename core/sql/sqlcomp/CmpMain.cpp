@@ -454,6 +454,7 @@ void CmpMain::sqlcompCleanup(const char *input_str,
     int ret = dlclose(dlptr);
     dlptr = NULL;
     CmpMain::msGui_ = NULL;
+    CmpMain::pExpFuncs_ = NULL;
   }	
 
   CURRENTSTMT->clearDisplayGraph();
@@ -544,13 +545,16 @@ char* localizedText(QueryText& qt, CharInfo::CharSet &localizedTextCharSet, NAMe
 
 void CmpMain::FlushQueryCachesIfLongTime(Lng32 begTimeInSec)
 {
-  Lng32 max_cache_flush_time = 24 * 60 * 60;  // 24 hours by default
 
-  if ( char *sct = getenv("RMS_SIK_GC_INTERVAL_SECONDS") )
+  static Lng32 max_cache_flush_time = 24 * 60 * 60;  // 24 hours by default
+  static bool gotSikGcInterval = FALSE;
+
+  static char *sct = getenv("RMS_SIK_GC_INTERVAL_SECONDS");
+  if (sct != NULL)
   {
-     max_cache_flush_time = (Lng32)str_atoi(sct, str_len(sct)) ;
-     if (max_cache_flush_time < 10)
-         max_cache_flush_time = 10;
+         max_cache_flush_time = (Lng32)str_atoi(sct, str_len(sct)) ;
+         if (max_cache_flush_time < 10)
+             max_cache_flush_time = 10;
   }
 
   // NOTE: For this purpose, we can ignore the microseconds part of the TimeVal.
@@ -2566,7 +2570,7 @@ CmpMain::ReturnStatus CmpMain::compile(const char *input_str,           //IN
 
         if (((RelRoot *)queryExpr)->getDisplayTree() && CmpMain::msGui_ == CmpCommon::context() )
           {
-            if (CmpMain::pExpFuncs_->fpDisplayExecution())
+            if (CmpMain::pExpFuncs_->fpExecutionDisplayIsEnabled())
               {
                 //------------------------------------------------------------
                 // GSH: User has set a breakpoint for display in execution
@@ -2575,7 +2579,7 @@ CmpMain::ReturnStatus CmpMain::compile(const char *input_str,           //IN
                 //------------------------------------------------------------
 		ComTdbRoot * originalRootTdb =
 		  (ComTdbRoot *) generator.getFragmentDir()->getTopObj(0);
-                originalRootTdb->setDisplayExecution(2);
+                originalRootTdb->setDisplayExecution(1);
               }
             else
               {
@@ -2586,6 +2590,7 @@ CmpMain::ReturnStatus CmpMain::compile(const char *input_str,           //IN
                 NADELETEBASIC(cb, heap);
                 *gen_code = 0;
                 *gen_code_len = 0;
+                *CmpCommon::diags() << DgSqlCode(1032);
                 retval = DISPLAYDONE;
               }
         } // display TCB tree
@@ -2846,7 +2851,7 @@ void ExprNode::displayTree()
         {
            GetExportedFunctions = (fpGetSqlcmpdbgExpFuncs) dlsym(dlptr, "GetSqlcmpdbgExpFuncs");
            if (GetExportedFunctions)
-                CmpMain::pExpFuncs_ = GetExportedFunctions();
+             CmpMain::pExpFuncs_ = GetExportedFunctions();
            if ( CmpMain::pExpFuncs_ == NULL )
            {
               int ret = dlclose(dlptr);
@@ -2855,7 +2860,9 @@ void ExprNode::displayTree()
         }
         else // dlopen() failed 
         { 
-           char *msg = dlerror(); 
+           char *msg = dlerror();
+           *CmpCommon::diags() << DgSqlCode(-2245)
+                               << DgString0(msg);
         }
         if ( dlptr == NULL )
            CmpMain::msGui_ = NULL ;  //This Compiler Instance cannot use debugger
@@ -2894,6 +2901,8 @@ void CascadesPlan::displayTree()
         else // dlopen() failed 
         { 
            char *msg = dlerror(); 
+           *CmpCommon::diags() << DgSqlCode(-2245)
+                               << DgString0(msg);
         }
         if ( dlptr == NULL )
            CmpMain::msGui_ = NULL ;  //This Compiler Instance cannot use debugger
@@ -2917,12 +2926,11 @@ void initializeGUIData(SqlcmpdbgExpFuncs* expFuncs)
         }
 
       // Pass information about the plan to be displayed to the GUI:
-      expFuncs->fpSqldbgSetPointers(CURRSTMT_OPTGLOBALS->memo
-                                      ,CURRSTMT_OPTGLOBALS->task_list
-                                      ,QueryAnalysis::Instance()
-                                      ,cmpCurrentContext
-                                      ,gpClusterInfo
-                                      );
+      expFuncs->fpSqldbgSetCmpPointers(CURRSTMT_OPTGLOBALS->memo,
+                                       CURRSTMT_OPTGLOBALS->task_list,
+                                       QueryAnalysis::Instance(),
+                                       cmpCurrentContext,
+                                       gpClusterInfo);
 } // initializeGUIData(...)
 
 #endif

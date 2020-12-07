@@ -30,6 +30,7 @@
 #include <mpi.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <sys/resource.h>
 #include "msgdef.h"
 #include "props.h"
 #include "localio.h"
@@ -67,6 +68,7 @@ SB_Verif_Type  gv_ms_su_verif = -1;
 Verifier_t  MyVerifier = -1;
 int Timeout = 0;
 bool genSnmpTrapEnabled = false;
+bool GenCoreOnFailureExit = false;
 
 class CWatchdog;
 
@@ -76,6 +78,31 @@ CProcessMonitor *ProcessMonitor = NULL;
 
 DEFINE_EXTERN_COMP_DOVERS(sqwatchdog)
 DEFINE_EXTERN_COMP_PRINTVERS(sqwatchdog)
+
+void mon_failure_exit( bool genCoreOnFailureExit )
+{
+    const char method_name[] = "mon_failure_exit";
+
+    char buf[MON_STRING_BUF_SIZE];
+    snprintf(buf, sizeof(buf), "[%s], Aborting! genCore=%d, GenCore=%d\n",
+             method_name, genCoreOnFailureExit, GenCoreOnFailureExit);
+    mon_log_write(MON_WATCHDOG_FAILURE_EXIT_1, SQ_LOG_CRIT, buf);
+
+    if (genCoreOnFailureExit || GenCoreOnFailureExit)
+    {
+        // Generate a core file, abort is intentional
+        abort();
+    }
+    else
+    {
+        // Don't generate a core file, abort is intentional
+        struct rlimit limit;
+        limit.rlim_cur = 0;
+        limit.rlim_max = 0;
+        setrlimit(RLIMIT_CORE, &limit);
+        abort();
+    }
+}
 
 CWatchdog::CWatchdog( void )
           :CLock()
@@ -503,14 +530,6 @@ void localIORecvCallback(struct message_def *recv_msg, int size)
             Watchdog->CLock::wakeOne();
             break;
 
-        case MsgType_UnsolicitedMessage:
-            if (trace_settings & TRACE_REQUEST)
-            {
-                trace_printf( "%s@%d CB Unsolicited Message Received!\n",
-                              method_name, __LINE__ );
-            }
-            break;
-
         default:
             if (trace_settings & TRACE_REQUEST)
             {
@@ -539,7 +558,7 @@ void InitLocalIO( void )
                 char buf[MON_STRING_BUF_SIZE];
                 sprintf(buf, "[%s - InitLocalIO], Error= Failed to load cluster configuration!\n", MyName);
                 monproc_log_write(MON_WATCHDOG_INITLOCALIO_1, SQ_LOG_ERR, buf);
-                abort();
+                exit(EXIT_FAILURE);
             }
         }
         else
@@ -553,7 +572,7 @@ void InitLocalIO( void )
                 monproc_log_write(MON_WATCHDOG_INITLOCALIO_3, SQ_LOG_ERR, buf);
                 MyNid = 0;
             }
-            abort();
+            exit(EXIT_FAILURE);
         }
 
         lnodeConfig = ClusterConfig.GetLNodeConfig( MyNid );
@@ -605,7 +624,7 @@ void TraceInit( int & argc, char **&argv )
 {
     // Determine trace file name
     const char *tmpDir;
-    tmpDir = getenv( "MPI_TMPDIR" );
+    tmpDir = getenv( "TRAF_LOG" );
         
     const char *envVar;
     envVar = getenv("WDT_TRACE_FILE");
@@ -765,13 +784,6 @@ int main (int argc, char *argv[])
     MyNid = atoi(argv[3]);
     MyPid = atoi (argv[4]);
     gv_ms_su_verif  = MyVerifier = atoi(argv[9]);
-
-    // Set flag to indicate whether we are operating in a real cluster
-    // or a virtual cluster.
-    if ( getenv("SQ_VIRTUAL_NODES") )
-    {
-        IsRealCluster = false;
-    }
 
     MonLog = new CMonLog( "log4cxx.monitor.wdg.config", "WDG", "alt.wdg", MyPNID, MyNid, MyPid, MyName  );
 

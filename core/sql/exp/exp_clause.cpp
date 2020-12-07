@@ -224,6 +224,9 @@ ex_clause::ex_clause(clause_type type,
 	case ITM_POSITION_DOUBLEBYTE:
 	  setClassID(FUNC_POSITION_DOUBLEBYTE_ID);
 	  break;
+	case ITM_SPLIT_PART:
+	  setClassID(FUNC_SPLIT_PART_ID);
+	  break;
 	case ITM_CONCAT:
 	  setClassID(FUNC_CONCAT_ID);
 	  break;
@@ -506,6 +509,7 @@ ex_clause::ex_clause(clause_type type,
 	  setClassID(FUNC_QUERYID_EXTRACT);
 	  break;
 	case ITM_UNIQUE_ID:
+	case ITM_UNIQUE_ID_SYS_GUID:
 	case ITM_UNIQUE_SHORT_ID:
 	  setClassID(FUNC_UNIQUE_ID);
 	  break;
@@ -554,7 +558,11 @@ ex_clause::ex_clause(clause_type type,
         case ITM_AES_DECRYPT:
           setClassID(FUNC_AES_DECRYPT);
           break;
-	default:
+        case ITM_ENCODE_BASE64:
+        case ITM_DECODE_BASE64:
+          setClassID(FUNC_BASE64_ENC_DEC);
+          break;
+ 	default:
 	  GenAssert(0, "ex_clause: Unknown Class ID.");
 	  break;
 	}
@@ -722,6 +730,9 @@ char *ex_clause::findVTblPtr(short classID)
       break;
     case ex_clause::FUNC_POSITION_DOUBLEBYTE_ID:
       GetVTblPtr(vtblPtr, ex_function_position_doublebyte);
+      break;
+    case ex_clause::FUNC_SPLIT_PART_ID:
+      GetVTblPtr(vtblPtr, ex_function_split_part);
       break;
     case ex_clause::FUNC_CONCAT_ID:
       GetVTblPtr(vtblPtr, ex_function_concat);
@@ -1051,7 +1062,10 @@ char *ex_clause::findVTblPtr(short classID)
     case ex_clause::FUNC_AES_DECRYPT:
       GetVTblPtr(vtblPtr, ExFunctionAESDecrypt);
       break;
-     default:
+    case ex_clause::FUNC_BASE64_ENC_DEC:
+      GetVTblPtr(vtblPtr, ExFunctionBase64EncDec);
+      break;
+    default:
       GetVTblPtr(vtblPtr, ex_clause);
       break;
     }
@@ -1508,6 +1522,7 @@ const char * getOperTypeEnumAsString(Int16 /*OperatorTypeEnum*/ ote)
 
     case ITM_LAST_ITEM_OP: return "ITM_LAST_ITEM_OP";
     case ITM_UNIQUE_ID: return "ITM_UNIQUE_ID";
+    case ITM_UNIQUE_ID_SYS_GUID: return "ITM_UNIQUE_ID_SYS_GUID";
     case ITM_UNIQUE_SHORT_ID: return "ITM_UNIQUE_SHORT_ID";
     case ITM_ROWNUM: return "ITM_ROWNUM";
     case ITM_HBASE_COLUMN_LOOKUP: return "ITM_HBASE_COLUMN_LOOKUP";
@@ -1517,6 +1532,9 @@ const char * getOperTypeEnumAsString(Int16 /*OperatorTypeEnum*/ ote)
     case ITM_HBASE_VERSION: return "ITM_HBASE_VERSION";
 
     case ITM_SEQUENCE_VALUE: return "ITM_SEQUENCE_VALUE";
+
+    case ITM_ENCODE_BASE64: return "ITM_ENCODE_BASE64";
+    case ITM_DECODE_BASE64: return "ITM_DECODE_BASE64";
 
     // Note, this list is arranged in the same order as the types
     // appear in common/OperTypeEnum.h, please keep the same order
@@ -1632,7 +1650,9 @@ ex_arith_clause::ex_arith_clause(OperatorTypeEnum oper_type,
                   (oper_type == ITM_NEGATE ? 2 : 3), attr, space),
        flags_(0)
 {
+  setAugmentedAssignOperation(TRUE);
   arithRoundingMode_ = (char)arithRoundingMode;
+
 
   if (divToDownscale)
     setDivToDownscale(TRUE);
@@ -1659,6 +1679,7 @@ ex_arith_clause::ex_arith_clause(clause_type type,
 				   flags_(0)
  
 {
+  setAugmentedAssignOperation(TRUE);
   setInstruction(); 
 }
 
@@ -2088,7 +2109,7 @@ void ex_function_dateformat::displayContents(Space * space, const char * /*displ
 // Function to compare two strings. 
 Int32 charStringCompareWithPad(char* in_s1, Int32 length1, 
                                           char* in_s2, Int32 length2, 
-                                          char space)
+                                          char padChar)
 {
   unsigned char * s1 = (unsigned char *)in_s1;
   unsigned char * s2 = (unsigned char *)in_s2;
@@ -2107,39 +2128,40 @@ Int32 charStringCompareWithPad(char* in_s1, Int32 length1,
      {
        if (length1 > length2)
          {
-   	Int32 j = compare_len;
-   	
-   	while ((j < length1) && (compare_code == 0))
-   	  {
-   	    if (s1[j] < space )
-   	      compare_code = -1;
-   	    else
-   	      if (s1[j] > space )
-   		compare_code = 1;
-   	    j++;
-   	  }
+           Int32 j = compare_len;
+           
+           while ((j < length1) && (compare_code == 0))
+             {
+               if (s1[j] < padChar )
+                 compare_code = -1;
+               else
+                 if (s1[j] > padChar )
+                   compare_code = 1;
+               j++;
+             }
          }
        else
          {
-   	Int32 j = compare_len;
-   	
-   	while ((j < length2) && (compare_code == 0))
-   	  {
-   	    if (s2[j] < space )
-   	      compare_code = 1;
-   	    else
-   	      if (s2[j] > space )
-   		compare_code = -1;
-   	    j++;
-   	  }
+           Int32 j = compare_len;
+           
+           while ((j < length2) && (compare_code == 0))
+             {
+               if (s2[j] < padChar )
+                 compare_code = 1;
+               else
+                 if (s2[j] > padChar )
+                   compare_code = -1;
+               j++;
+             }
          }
-    }
-     //return 0,1,-1 values, not the positive, 0, negative
-     if (compare_code > 0)
-       compare_code = 1;
-     if (compare_code < 0)
-       compare_code = -1;
-    return compare_code;
+     }
+
+   //return 0,1,-1 values, not the positive, 0, negative
+   if (compare_code > 0)
+     compare_code = 1;
+   if (compare_code < 0)
+     compare_code = -1;
+   return compare_code;
 }
 
 Int32 wcharStringCompareWithPad(NAWchar* s1, Int32 length1, 

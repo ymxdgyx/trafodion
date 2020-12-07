@@ -34,6 +34,8 @@ import java.util.Map;
 import java.util.Arrays;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 
 import org.apache.log4j.PropertyConfigurator;
 import org.apache.log4j.Logger;
@@ -68,6 +70,7 @@ import org.apache.hadoop.hbase.TableNotFoundException;
 import org.apache.hadoop.hbase.snapshot.SnapshotCreationException;
 import org.apache.hadoop.hbase.protobuf.generated.HBaseProtos.SnapshotDescription;
 import org.apache.hadoop.hbase.protobuf.generated.HBaseProtos.SnapshotDescription.Type;
+import org.apache.hadoop.hbase.snapshot.SnapshotExistsException;
 //import org.apache.hadoop.hbase.protobuf.generated.HBaseProtos;
 
 import org.apache.hadoop.hbase.io.compress.Compression.Algorithm;
@@ -93,6 +96,8 @@ import java.util.TreeSet;
 
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.LocatedFileStatus;
 import org.apache.hadoop.fs.permission.AclEntry;
 import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.io.hfile.HFile;
@@ -161,6 +166,7 @@ public class HBaseClient {
     public static final int HBASE_SPLIT_POLICY = 22;
     public static final int HBASE_CACHE_DATA_IN_L1 = 23;
     public static final int HBASE_PREFETCH_BLOCKS_ON_OPEN = 24;
+    public static final int HBASE_HDFS_STORAGE_POLICY= 25;
 
 
     private static Connection connection; 
@@ -168,6 +174,11 @@ public class HBaseClient {
     }
 
     static {
+        System.setProperty("hostName", System.getenv("HOSTNAME"));
+        String trafLog = System.getProperty("TRAF_LOG"); 
+        if (trafLog == null) {  
+            System.setProperty("TRAF_LOG", System.getenv("TRAF_LOG"));  
+        } 
     	String confFile = System.getProperty("trafodion.log4j.configFile");
         System.setProperty("trafodion.root", System.getenv("TRAF_HOME"));
     	if (confFile == null) {
@@ -230,10 +241,12 @@ public class HBaseClient {
    private class ChangeFlags {
        boolean tableDescriptorChanged;
        boolean columnDescriptorChanged;
+       boolean storagePolicyChanged;
 
        ChangeFlags() {
            tableDescriptorChanged = false;
            columnDescriptorChanged = false;
+           storagePolicyChanged = false;
        }
 
        void setTableDescriptorChanged() {
@@ -251,6 +264,19 @@ public class HBaseClient {
        boolean columnDescriptorChanged() {
            return columnDescriptorChanged;
        }
+
+       void setStoragePolicyChanged(String str) {
+           storagePolicy_ = str;
+           storagePolicyChanged = true;
+       }
+
+       boolean storagePolicyChanged()    {
+           return storagePolicyChanged;
+       }
+
+       String storagePolicy_;
+
+
    }
 
    private ChangeFlags setDescriptors(Object[] tableOptions,
@@ -470,6 +496,11 @@ public class HBaseClient {
 		  colDesc.setPrefetchBlocksOnOpen(false); 
 	      returnStatus.setColumnDescriptorChanged();
 	      break ;
+           case HBASE_HDFS_STORAGE_POLICY:
+               //TODO HBase 2.0 support this
+               //So when come to HBase 2.0, no need to do this via HDFS, just set here
+             returnStatus.setStoragePolicyChanged(tableOption);
+             break ;
            case HBASE_SPLIT_POLICY:
                // This method not yet available in earlier versions
                // desc.setRegionSplitPolicyClassName(tableOption));
@@ -491,6 +522,7 @@ public class HBaseClient {
        throws IOException, MasterNotRunningException {
             if (logger.isDebugEnabled()) logger.debug("HBaseClient.createk(" + tblName + ") called.");
             String trueStr = "TRUE";
+            ChangeFlags setDescRet = null;
             HTableDescriptor desc = new HTableDescriptor(tblName);
             addCoprocessor(desc);
             int defaultVersionsValue = 0;
@@ -511,7 +543,7 @@ public class HBaseClient {
                 HColumnDescriptor colDesc = new HColumnDescriptor(colFam);
 
                 // change the descriptors based on the tableOptions; 
-                setDescriptors(tableOptions,desc /*out*/,colDesc /*out*/, defaultVersionsValue);
+                setDescRet = setDescriptors(tableOptions,desc /*out*/,colDesc /*out*/, defaultVersionsValue);
                 
                 desc.addFamily(colDesc);
             }
@@ -538,7 +570,21 @@ public class HBaseClient {
                      admin.createTable(desc);
                   }
                }
-            admin.close();
+
+            if(setDescRet!= null)
+            {
+              if(setDescRet.storagePolicyChanged())
+              {
+                 Object tableOptionsStoragePolicy[] = new Object[HBASE_HDFS_STORAGE_POLICY+1];
+                 for(int i=0; i<HBASE_HDFS_STORAGE_POLICY; i++)
+                   tableOptionsStoragePolicy[i]="";
+                 tableOptionsStoragePolicy[HBASE_HDFS_STORAGE_POLICY]=(String)setDescRet.storagePolicy_ ;
+                 tableOptionsStoragePolicy[HBASE_NAME]=(String)tblName;
+                 alter(tblName,tableOptionsStoragePolicy,transID);
+              }
+            }
+            else
+              admin.close();
         return true;
     }
 
@@ -579,7 +625,6 @@ public class HBaseClient {
         Admin admin = getConnection().getAdmin();
         HTableDescriptor htblDesc = admin.getTableDescriptor(TableName.valueOf(tblName));       
         HColumnDescriptor[] families = htblDesc.getColumnFamilies();
-
         String colFam = (String)tableOptions[HBASE_NAME];
         if (colFam == null)
             return true; // must have col fam name
@@ -611,13 +656,18 @@ public class HBaseClient {
                 return true; // col fam already exists
         }
         else {
-            if (colDesc == null)
+            if (colDesc == null )
+            {
+               if( (String)tableOptions[HBASE_HDFS_STORAGE_POLICY] == null || (String)tableOptions[HBASE_HDFS_STORAGE_POLICY]=="" )
                 return true; // colDesc must exist
+            }
+            else {
 
-            int defaultVersionsValue = colDesc.getMaxVersions(); 
+              int defaultVersionsValue = colDesc.getMaxVersions(); 
 
-            status = 
+              status = 
                 setDescriptors(tableOptions,htblDesc /*out*/,colDesc /*out*/, defaultVersionsValue);
+           }
         }
 
             if (transID != 0) {
@@ -914,19 +964,6 @@ public class HBaseClient {
             Admin admin = getConnection().getAdmin();
 	    
 	    String snapshotName = srcTblName + "_SNAPSHOT";
-	    
-	    List<SnapshotDescription> l = new ArrayList<SnapshotDescription>(); 
-	    //	    l = admin.listSnapshots(snapshotName);
-	    l = admin.listSnapshots();
-	    if (! l.isEmpty())
-		{
-		    for (SnapshotDescription sd : l) {
-			if (sd.getName().compareTo(snapshotName) == 0)
-			    {
-				admin.deleteSnapshot(snapshotName);
-			    }
-		    }
-		}
             TableName tgtTableName = TableName.valueOf(tgtTblName);
             TableName srcTableName = TableName. valueOf(srcTblName);
 
@@ -937,13 +974,13 @@ public class HBaseClient {
             }
                 
 	    if (! admin.isTableDisabled(srcTableName))
-		admin.disableTable(srcTableName);
-	    admin.snapshot(snapshotName, srcTableName);
+	       admin.disableTable(srcTableName);
+	    createSnapshot(srcTblName, snapshotName, true);
 	    admin.cloneSnapshot(snapshotName, tgtTableName);
-	    admin.deleteSnapshot(snapshotName);
+	    deleteSnapshot(snapshotName, false);
 	    admin.enableTable(srcTableName);
-            admin.close();
-            return true;
+	    admin.close();
+	    return true;
     }
 
     public boolean exists(String tblName, long transID)  
@@ -1231,15 +1268,15 @@ public class HBaseClient {
       final String HFILE_NAME_PATTERN  = "[0-9a-f]*";
 
       // To estimate incidence of nulls, read the first 500 rows worth
-      // of KeyValues.
-      final int ROWS_TO_SAMPLE = 500;
+      // of KeyValues. For aligned format (numCols == 1), the whole row 
+      // is in one cell so we don't need to look for missing cells.
+      final int ROWS_TO_SAMPLE = ((numCols > 1) ? 500 : 0);  // don't bother sampling for aligned format
       int putKVsSampled = 0;
       int nonPutKVsSampled = 0;
       int missingKVsCount = 0;
       int sampleRowCount = 0;
       long totalEntries = 0;   // KeyValues in all HFiles for table
       long totalSizeBytes = 0; // Size of all HFiles for table 
-      long estimatedTotalPuts = 0;
       boolean more = true;
 
       // Make sure the config doesn't specify HBase bucket cache. If it does,
@@ -1354,13 +1391,32 @@ public class HBaseClient {
       long estimatedEntries = (ROWS_TO_SAMPLE > 0
                                  ? 0               // get from sample data, below
                                  : totalEntries);  // no sampling, use stored value
-      if (putKVsSampled > 0) // avoid div by 0 if no Put KVs in sample
-        {
-          estimatedTotalPuts = (putKVsSampled * totalEntries) / 
-                               (putKVsSampled + nonPutKVsSampled);
-          estimatedEntries = ((putKVsSampled + missingKVsCount) * estimatedTotalPuts)
+      if ((putKVsSampled > 0) && // avoid div by 0 if no Put KVs in sample
+          (putKVsSampled >= ROWS_TO_SAMPLE/10)) { // avoid really small samples
+        // Formerly, we would multiply this by a factor of 
+        // putKVsSampled / (putKVsSampled + nonPutKVsSampled).
+        // If non-put records are evenly distributed among the cells, then
+        // that would give a better estimate. However, we find that often
+        // (e.g. time-ordered data that is being aged out), the non-put cells
+        // clump up in one place -- they might even take a whole HFile!
+        // There is no real way to compensate other than reading the entire
+        // table. So, we don't try to scale down the number of rows based 
+        // on the proportion of non-Put cells. That means the value below
+        // will sometimes over-estimate, but it is much better to over-
+        // estimate than to under-estimate when it comes to row counts.
+        estimatedEntries = ((putKVsSampled + missingKVsCount) * totalEntries)
                                    / putKVsSampled;
-        }
+      } else { // few or no Puts found
+        // The first file might have been full of deletes, which can happen
+        // when time-ordered data ages out. We don't want to infer that the
+        // table as a whole is all deletes (it almost certainly isn't in the
+        // time-ordered data age-out case). We could just keep reading HFiles
+        // until we find one with a decent sample of rows but that might take
+        // awhile. Instead, we'll just punt and use totalEntries for our
+        // estimate. This will over-estimate, but it is far better to do that
+        // than to under-estimate.
+        estimatedEntries = totalEntries;
+      }
 
       // Calculate estimate of rows in all HFiles of table.
       rc[0] = (estimatedEntries + (numCols/2)) / numCols; // round instead of truncate
@@ -1398,8 +1454,6 @@ public class HBaseClient {
       long memStoreRows = estimateMemStoreRows(tblName, rowSize);
 
       if (logger.isDebugEnabled()) logger.debug(tblName + " contains a total of " + totalEntries + " KeyValues in all HFiles.");
-      if (logger.isDebugEnabled()) logger.debug("Based on a sample, it is estimated that " + estimatedTotalPuts +
-                   " of these KeyValues are of type Put.");
       if (putKVsSampled + missingKVsCount > 0)
         if (logger.isDebugEnabled()) logger.debug("Sampling indicates a null incidence of " + 
                      (missingKVsCount * 100)/(putKVsSampled + missingKVsCount) +
@@ -1511,13 +1565,33 @@ public class HBaseClient {
       long estimatedEntries = ((ROWS_TO_SAMPLE > 0) && (numCols > 1)
                                  ? 0               // get from sample data, below
                                  : totalEntries);  // no sampling, use stored value
-      if (putKVsSampled > 0) // avoid div by 0 if no Put KVs in sample
-        {
-          long estimatedTotalPuts = (putKVsSampled * totalEntries) / 
-                               (putKVsSampled + nonPutKVsSampled);
-          estimatedEntries = ((putKVsSampled + missingKVsCount) * estimatedTotalPuts)
+
+      if ((putKVsSampled > 0) && // avoid div by 0 if no Put KVs in sample
+          (putKVsSampled >= ROWS_TO_SAMPLE/10)) { // avoid really small samples
+        // Formerly, we would multiply this by a factor of 
+        // putKVsSampled / (putKVsSampled + nonPutKVsSampled).
+        // If non-put records are evenly distributed among the cells, then
+        // that would give a better estimate. However, we find that often
+        // (e.g. time-ordered data that is being aged out), the non-put cells
+        // clump up in one place -- they might even take a whole HFile!
+        // There is no real way to compensate other than reading the entire
+        // table. So, we don't try to scale down the number of rows based 
+        // on the proportion of non-Put cells. That means the value below
+        // will sometimes over-estimate, but it is much better to over-
+        // estimate than to under-estimate when it comes to row counts.
+        estimatedEntries = ((putKVsSampled + missingKVsCount) * totalEntries)
                                    / putKVsSampled;
-        }
+      } else { // few or no Puts found
+        // The first file might have been full of deletes, which can happen
+        // when time-ordered data ages out. We don't want to infer that the
+        // table as a whole is all deletes (it almost certainly isn't in the
+        // time-ordered data age-out case). We could just keep reading HFiles
+        // until we find one with a decent sample of rows but that might take
+        // awhile. Instead, we'll just punt and use totalEntries for our
+        // estimate. This will over-estimate, but it is far better to do that
+        // than to under-estimate.
+        estimatedEntries = totalEntries;
+      }
 
       if (logger.isDebugEnabled()) { 
         logger.debug("estimatedEntries = " + estimatedEntries + ", numCols = " + numCols);
@@ -1805,7 +1879,7 @@ public class HBaseClient {
   
   //returns the latest snapshot name for a table. returns null if table has no snapshots
   //associated with it
-  public String getLatestSnapshot(String tabName) throws IOException
+  public static String getLatestSnapshot(String tabName) throws IOException
   {
     Admin admin = getConnection().getAdmin();
     List<SnapshotDescription> snapDescs = admin.listSnapshots();
@@ -2093,7 +2167,52 @@ public class HBaseClient {
       if (logger.isDebugEnabled()) logger.debug("HBaseClient.deleteSnapshot() - Snapshot deleted: " + snapshotName);
       return true;
   }
-}
     
-
+  public static boolean createSnapshot( String tableName, String snapshotName, boolean deleteIfExists)
+      throws IOException
+  {
+    Admin admin = null;
+    try 
+    {
+      admin = getConnection().getAdmin();
+      try {
+         admin.snapshot(snapshotName, TableName.valueOf(tableName));
+      } catch (SnapshotExistsException e) {
+         try {
+           if (! deleteIfExists)
+              throw e;
+           admin.deleteSnapshot(snapshotName);
+         } catch (IOException ioe) {}
+         admin.snapshot(snapshotName, TableName.valueOf(tableName));
+      }
+    }
+    finally
+    {
+      admin.close();
+    }
+    return true;
+  }
+  
+  public static boolean deleteSnapshot( String snapshotName, boolean throwError)
+      throws IOException
+  {
+    
+    Admin admin = null;
+    try
+    {
+      admin = getConnection().getAdmin();
+      try {
+        admin.deleteSnapshot(snapshotName);
+      } catch (IOException ioe) {
+          if (throwError)
+             throw ioe;
+      }
+    }
+    finally 
+    {
+       admin.close();
+    }
+    return true;
+  }
+}
 

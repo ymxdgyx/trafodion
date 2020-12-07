@@ -180,6 +180,7 @@ public:
 	SecPwd*			m_SecPwd;
 	ProcInfo		m_SecInfo;
     char            m_ClusterName[MAX_SQL_IDENTIFIER_LEN+1]; // seaquest cluster name
+    int             m_ClusterNameLength;
 private:
 	HANDLE						m_ConnectEvent;
 	IDL_OBJECT_def				m_RetSQLSvc_ObjRef;
@@ -276,6 +277,10 @@ private:
 	char			m_CertificateFileActive[MAX_SQL_IDENTIFIER_LEN+1];
 	SQLUINTEGER		m_SecurityMode;
 	bool			m_RetryEncryption;
+
+    //hold the lob handle from last select for insert >16m
+    IDL_string      lobHandleSave;
+    IDL_long        lobHandleLenSave;
 
 	void reset(bool clearE=true);
 	friend class	CStmt;

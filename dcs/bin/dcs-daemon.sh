@@ -25,7 +25,7 @@
 #
 # Environment Variables
 #
-#   DCS_CONF_DIR   Alternate DCS conf dir. Default is ${DCS_HOME}/conf.
+#   DCS_CONF_DIR   Alternate DCS conf dir. Default is ${TRAF_CONF}/dcs.
 #   DCS_LOG_DIR    Where log files are stored.  PWD by default.
 #   DCS_PID_DIR    The pid files are stored. ${DCS_HOME}/tmp by default.
 #   DCS_IDENT_STRING   A string representing this instance. $USER by default
@@ -97,12 +97,12 @@ wait_until_done ()
 
 # get log directory
 if [ "$DCS_LOG_DIR" = "" ]; then
-  export DCS_LOG_DIR="$DCS_HOME/logs"
+  export DCS_LOG_DIR="$TRAF_LOG/dcs"
 fi
 mkdir -p "$DCS_LOG_DIR"
 
 if [ "$DCS_PID_DIR" = "" ]; then
-  DCS_PID_DIR="$DCS_HOME/tmp"
+  DCS_PID_DIR="$TRAF_VAR"
 fi
 
 #DCS_IDENT_STRING can be set in environment to uniquely identify dcs instances

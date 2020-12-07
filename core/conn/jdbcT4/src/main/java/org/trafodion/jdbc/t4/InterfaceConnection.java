@@ -41,6 +41,7 @@ import java.sql.SQLClientInfoException;
 import java.sql.SQLException;
 import java.sql.SQLWarning;
 import java.util.Hashtable;
+import java.util.HashMap;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.logging.Handler;
@@ -54,6 +55,7 @@ class InterfaceConnection {
 	
 	static final short SQL_COMMIT = 0;
 	static final short SQL_ROLLBACK = 1;
+	private int activeTimeBeforeCancel = -1;
 	private int txnIsolationLevel = Connection.TRANSACTION_READ_COMMITTED;
 	private boolean autoCommit = true;
 	private boolean isReadOnly = false;
@@ -84,8 +86,8 @@ class InterfaceConnection {
 	T4Properties t4props_;
 	SQLWarning sqlwarning_;
 
-	Hashtable encoders = new Hashtable(11);
-	Hashtable decoders = new Hashtable(11);
+	HashMap encoders = new HashMap(11);
+	HashMap decoders = new HashMap(11);
 
 	// static fields from odbc_common.h and sql.h
 	static final int SQL_TXN_READ_UNCOMMITTED = 1;
@@ -96,6 +98,7 @@ class InterfaceConnection {
 	static final short SQL_ATTR_ACCESS_MODE = 101;
 	static final short SQL_ATTR_AUTOCOMMIT = 102;
 	static final short SQL_TXN_ISOLATION = 108;
+	static final short SET_SCHEMA = 1001; // this value is follow server side definition
 
 	// spj proxy syntax support
 	static final short SPJ_ENABLE_PROXY = 1040;
@@ -129,6 +132,7 @@ class InterfaceConnection {
 	private String _remoteProcess;
 	private String _connStringHost = "";
 
+        int getActiveTimeBeforeCancel() { return activeTimeBeforeCancel; }
 	InterfaceConnection(TrafT4Connection conn, T4Properties t4props) throws SQLException {
 		_t4Conn = conn;
 		t4props_ = t4props;
@@ -164,7 +168,7 @@ class InterfaceConnection {
 		// Connection context details
 		inContext = getInContext(t4props);
 		m_ncsSrvr_ref = t4props.getUrl();
-		_ignoreCancel = false;
+		_ignoreCancel = t4props.getIgnoreCancel();
 
 		if (t4props_.t4Logger_.isLoggable(Level.FINEST) == true) {
 			Object p[] = T4LoggingUtilities.makeParams(t4props_, t4props);
@@ -175,6 +179,11 @@ class InterfaceConnection {
 			t4props_.t4Logger_.logp(Level.FINEST, "InterfaceConnection", "", temp, p);
 		}
 		sqlwarning_ = null;
+
+        this.termCharset_ =
+                t4props.getClientCharset() == null ? InterfaceUtilities.SQLCHARSETCODE_UTF8
+                        : InterfaceUtilities.getCharsetValue(t4props.getClientCharset());
+
 		connect();
 	}
 	
@@ -210,6 +219,10 @@ class InterfaceConnection {
 		return this._roleName;
 	}
 
+	boolean getIgnoreCancel() {
+		return this._ignoreCancel;
+	}
+
 	CONNECTION_CONTEXT_def getInContext() {
 		return inContext;
 	}
@@ -217,7 +230,7 @@ class InterfaceConnection {
 	private CONNECTION_CONTEXT_def getInContext(T4Properties t4props) {
 		inContext = new CONNECTION_CONTEXT_def();
 		inContext.catalog = t4props.getCatalog();
-		inContext.schema = t4props.getSchema();
+        inContext.setSchema(t4props.getSchema());
 		inContext.datasource = t4props.getServerDataSource();
 		inContext.userRole = t4props.getRoleName();
 		inContext.cpuToUse = t4props.getCpuToUse();
@@ -228,6 +241,7 @@ class InterfaceConnection {
 
 		inContext.queryTimeoutSec = t4props.getQueryTimeout();
 		inContext.idleTimeoutSec = (short) t4props.getConnectionTimeout();
+		inContext.clipVarchar = (short) t4props.getClipVarchar();
 		inContext.loginTimeoutSec = (short) t4props.getLoginTimeout();
 		inContext.txnIsolationLevel = (short) SQL_TXN_READ_COMMITTED;
 		inContext.rowSetSize = t4props.getFetchBufferSize();
@@ -388,6 +402,9 @@ class InterfaceConnection {
 	int getConnectionTimeout() {
 		return inContext.idleTimeoutSec;
 	}
+	short getClipVarchar() {
+		return inContext.clipVarchar;
+	}
 
 	String getCatalog() {
 		if (outContext != null) {
@@ -413,13 +430,34 @@ class InterfaceConnection {
 		return userDesc.userName;
 	}
 
-	String getSchema() {
-		if (outContext != null) {
-			return outContext.schema;
-		} else {
-			return inContext.schema;
-		}
-	}
+    String getSchema() {
+        if (outContext != null) {
+            return outContext.getSchema();
+        } else {
+            return inContext.getSchema();
+        }
+    }
+
+    void setSchemaDirect(String schema) {
+        outContext.setSchema(schema);
+    }
+    void setSchema(TrafT4Connection conn, String schema) throws SQLException {
+        if (t4props_.t4Logger_.isLoggable(Level.FINEST) == true) {
+            Object p[] = T4LoggingUtilities.makeParams(conn.props_, schema);
+            String temp = "Setting connection schema = " + schema;
+            t4props_.t4Logger_.logp(Level.FINEST, "InterfaceConnection", "setSchema", temp, p);
+        }
+        if (schema == null || schema.length() == 0) {
+            return;
+        }
+        setConnectionAttr(conn, SET_SCHEMA, 0, schema);
+        setSchemaDirect(schema);
+        if (t4props_.t4Logger_.isLoggable(Level.FINEST) == true) {
+            Object p[] = T4LoggingUtilities.makeParams(conn.props_, schema);
+            String temp = "Setting connection schema = " + schema + " is done.";
+            t4props_.t4Logger_.logp(Level.FINEST, "InterfaceConnection", "setSchema", temp, p);
+        }
+    }
 
 	void setLocale(Locale locale) {
 		this.locale = locale;
@@ -445,56 +483,44 @@ class InterfaceConnection {
 		endTransaction(SQL_ROLLBACK);
 	}
 
-	void cancel() throws SQLException {
-		if(!this._ignoreCancel) {
-			String srvrObjRef = "" + ncsAddr_.getPort();
-			// String srvrObjRef = t4props_.getServerID();
-			int srvrType = 2; // AS server
-			CancelReply cr_ = null;
+	void cancel(long startTime) throws SQLException 
+	{
+		String errorText = null;
+		long currentTime;
+		if (startTime != -1) {
+			if (activeTimeBeforeCancel != -1) {
+				currentTime = System.currentTimeMillis();
+				if ((activeTimeBeforeCancel * 1000) < (currentTime - startTime))
+					return; 
+			}
+		}
+
+		String srvrObjRef = "" + ncsAddr_.getPort();
+		// String srvrObjRef = t4props_.getServerID();
+		int srvrType = 2; // AS server
+		CancelReply cr_ = null;
 	
 			if (t4props_.t4Logger_.isLoggable(Level.FINEST) == true) {
 				Object p[] = T4LoggingUtilities.makeParams(t4props_);
-				String temp = "cancel request received for " + srvrObjRef;
+			String temp = "cancel request received for " + srvrObjRef;
 				t4props_.t4Logger_.logp(Level.FINEST, "InterfaceConnection", "connect", temp, p);
-			}
+		}
 	
-			//
-			// Send the cancel to the ODBC association server.
-			//
-			String errorText = null;
-			int tryNum = 0;
-			String errorMsg = null;
-			String errorMsg_detail = null;
-			long currentTime = (new java.util.Date()).getTime();
-			long endTime;
+		cr_ = T4_Dcs_Cancel.cancel(t4props_, this, dialogueId_, srvrType, srvrObjRef, 0);
 	
-			if (inContext.loginTimeoutSec > 0) {
-				endTime = currentTime + inContext.loginTimeoutSec * 1000;
-			} else {
-	
-				// less than or equal to 0 implies infinit time out
-				endTime = Long.MAX_VALUE;
-	
-				//
-				// Keep trying to contact the Association Server until we run out of
-				// time, or make a connection or we exceed the retry count.
-				//
-			}
-			cr_ = T4_Dcs_Cancel.cancel(t4props_, this, dialogueId_, srvrType, srvrObjRef, 0);
-	
-			switch (cr_.m_p1_exception.exception_nr) {
-			case TRANSPORT.CEE_SUCCESS:
+		switch (cr_.m_p1_exception.exception_nr) {
+		case TRANSPORT.CEE_SUCCESS:
 				if (t4props_.t4Logger_.isLoggable(Level.FINEST) == true) {
 					Object p[] = T4LoggingUtilities.makeParams(t4props_);
 					String temp = "Cancel successful";
 					t4props_.t4Logger_.logp(Level.FINEST, "InterfaceConnection", "connect", temp, p);
 				}
-				break;
-			default:
+			break;
+		default:
 	
-				//
-				// Some unknown error
-				//
+			//
+			// Some unknown error
+			//
 				if (cr_.m_p1_exception.clientErrorText != null) {
 					errorText = "Client Error text = " + cr_.m_p1_exception.clientErrorText;
 				}
@@ -508,10 +534,7 @@ class InterfaceConnection {
 					t4props_.t4Logger_.logp(Level.FINEST, "InterfaceConnection", "cancel", temp, p);
 				}
 				throw TrafT4Messages.createSQLException(t4props_, locale, "as_cancel_message_error", errorText);
-			} // end switch
-	
-			currentTime = (new java.util.Date()).getTime();
-		}
+		} // end switch
 	}
 	
 	private void initDiag(boolean setTimestamp, boolean downloadCert) throws SQLException {
@@ -559,7 +582,7 @@ class InterfaceConnection {
 					}
 
 					try {
-						t4connection_.getInputOutput().CloseIO(new LogicalByteArray(1, 0, false));
+						t4connection_.getInputOutput().closeIO();
 					} catch (Exception e) {
 						// ignore error
 					}
@@ -700,7 +723,7 @@ class InterfaceConnection {
 			_security.openCertificate();
 			this.encryptPassword();
 		}catch(SecurityException se) {	
-			if(se.getErrorCode() != 29713) {
+			if(se.getErrorCode() != 29713 && se.getErrorCode() != 29721) {
 				throw se; //we have a fatal error
 			}
 				
@@ -895,11 +918,8 @@ class InterfaceConnection {
 		setISOMapping(cr.isoMapping);
 
 		if (cr.isoMapping == InterfaceUtilities.getCharsetValue("ISO8859_1")) {
-			setTerminalCharset(InterfaceUtilities.getCharsetValue("ISO8859_1"));
 			this.inContext.ctxDataLang = 0;
 			this.inContext.ctxErrorLang = 0;
-		} else {
-			setTerminalCharset(InterfaceUtilities.getCharsetValue("UTF-8"));
 		}
 		
 		if(cr.securityEnabled) {
@@ -909,6 +929,7 @@ class InterfaceConnection {
 			this.oldEncryptPassword();
 			this.initDiag(false,false);
 		}
+        this.setConnectionAttr(this._t4Conn, TRANSPORT.SQL_ATTR_CLIPVARCHAR, this.inContext.clipVarchar, String.valueOf(this.inContext.clipVarchar));
 	}
 
 	// @deprecated
@@ -1216,16 +1237,13 @@ class InterfaceConnection {
 
 	void endTransaction(short commitOption) throws SQLException {
 		EndTransactionReply etr_ = null;
-		if (autoCommit && !_t4Conn.isBeginTransaction()) {
+		if (autoCommit) { 
 			throw TrafT4Messages.createSQLException(t4props_, locale, "invalid_commit_mode", null);
 		}
 
 		isConnectionOpen();
-		// XA_RESUMETRANSACTION();
-
 		try {
 			etr_ = t4connection_.EndTransaction(commitOption);
-			_t4Conn.setBeginTransaction(false);
 		} catch (SQLException tex) {
 			if (t4props_.t4Logger_.isLoggable(Level.FINEST) == true) {
 				Object p[] = T4LoggingUtilities.makeParams(t4props_, commitOption);

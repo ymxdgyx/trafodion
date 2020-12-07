@@ -64,6 +64,9 @@ void setConnectAttr(JNIEnv *jenv, jobject jobj, jstring server, long dialogueId,
     FUNCTION_RETURN_VOID((NULL));
 }
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_setCatalog
 (JNIEnv *jenv, jobject jobj, jstring server, jlong dialogueId, jstring catalog)
 {
@@ -380,8 +383,8 @@ JNIEXPORT jint JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_beginTr
 
 JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_connectInit
 (JNIEnv *jenv, jobject jobj, jstring server, jlong dialogueId, jstring catalog,
-        jstring schema, jstring mploc, jboolean isReadOnly, jboolean autoCommit, jint transactionIsolation,
-        jint loginTimeout, jint queryTimeout, jstring modulecaching, jstring compiledmodulelocation, jboolean blnDoomUsrTxn,
+        jstring schema, jboolean isReadOnly, jboolean autoCommit, jint transactionIsolation,
+        jint loginTimeout, jint queryTimeout, 
         jint statisticsIntervalTime, jint statisticsLimitTime, jstring statisticsType, jstring programStatisticsEnabled, jstring statisticsSqlPlanEnabled)
 {
 
@@ -394,8 +397,6 @@ JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_connect
                     DebugJString(jenv,catalog)));
     DEBUG_OUT(DEBUG_LEVEL_ENTRY,("  schema=%s",
                     DebugJString(jenv,schema)));
-    DEBUG_OUT(DEBUG_LEVEL_ENTRY,("  mploc=%s",
-                    DebugJString(jenv,mploc)));
     DEBUG_OUT(DEBUG_LEVEL_ENTRY,("  isReadOnly=%d, transactionIsolation=%ld",
                     isReadOnly,
                     transactionIsolation));
@@ -410,20 +411,9 @@ JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_connect
                     DebugJString(jenv,statisticsSqlPlanEnabled)
             ));
 
-    //MFC - new properties
-    DEBUG_OUT(DEBUG_LEVEL_ENTRY,("  MFC modulecaching=%s",
-                    DebugJString(jenv,modulecaching)));
-    DEBUG_OUT(DEBUG_LEVEL_ENTRY,("  MFC compiledmodulelocation=%s",
-                    DebugJString(jenv,compiledmodulelocation)));
-
     const char *nCatalog;
     const char *nSchema;
-    const char *nMploc;
     jthrowable exception;
-
-    // MFC - new properties
-    const char *nModuleCaching;
-    const char *nCompiledModuleLocation;
 
     // PUBLISHING
     const char *nStatisticsType;
@@ -459,8 +449,6 @@ JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_connect
     nCatalog = JNI_GetStringUTFChars(jenv,catalog, NULL);
     if (schema)
     nSchema = JNI_GetStringUTFChars(jenv,schema, NULL);
-    if (mploc)
-    nMploc = JNI_GetStringUTFChars(jenv,mploc, NULL);
 
     odbc_SQLSvc_SetConnectionOption_sme_(NULL, NULL,
             &setConnectException,
@@ -494,70 +482,6 @@ JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_connect
     }
     // new code end
 #endif /* NOT NEEDED with improvements to Native Expressions code */
-
-    if (srvrGlobal->nowaitOn == 2)
-    {
-        odbc_SQLSvc_SetConnectionOption_sme_(NULL, NULL,
-                &setConnectException,
-                dialogueId,
-                SET_OLT_QUERY_OPT,
-                0,
-                NULL,
-                &sqlWarning);
-        if (setConnectException.exception_nr != CEE_SUCCESS)
-        {
-            throwSetConnectionException(jenv, &setConnectException);
-            FUNCTION_RETURN_VOID(("SET_OLT_QUERY_OPT - setConnectException.exception_nr(%s) is not CEE_SUCCESS",
-                            CliDebugSqlError(setConnectException.exception_nr)));
-        }
-    }
-
-    if (mploc)
-    {
-        //Solution 10-120315-2068 --- start
-        /*
-         The SET NAMETYPE statement sets the NAMETYPE attribute value for the current
-         SQL session.
-         The SET NAMETYPE statement sets the NAMETYPE attribute for all dynamic
-         statements within the control flow scope of an embedded SQL program for the current
-         SQL session.
-         SET NAMETYPE is an SQL/MX extension.
-         ANSI | NSK
-         specifies whether the system assumes logical names (ANSI) or physical Guardian
-         names (NSK) are used to reference SQL/MP database objects in SQL statements
-         */
-        odbc_SQLSvc_SetConnectionOption_sme_(NULL, NULL,
-                &setConnectException,
-                dialogueId,
-                SET_NAMETYPE,
-                0,
-                "NSK",
-                &sqlWarning);
-        if (setConnectException.exception_nr != CEE_SUCCESS)
-        {
-            throwSetConnectionException(jenv, &setConnectException);
-            FUNCTION_RETURN_VOID(("SET_MPLOC - setConnectException.exception_nr(%s) is not CEE_SUCCESS",
-                            CliDebugSqlError(setConnectException.exception_nr)));
-        }
-
-        //Solution 10-120315-2068 --- end
-
-        odbc_SQLSvc_SetConnectionOption_sme_(NULL, NULL,
-                &setConnectException,
-                dialogueId,
-                SET_MPLOC,
-                0,
-                (char *)nMploc,
-                &sqlWarning);
-        JNI_ReleaseStringUTFChars(jenv,mploc, nMploc);
-
-        if (setConnectException.exception_nr != CEE_SUCCESS)
-        {
-            throwSetConnectionException(jenv, &setConnectException);
-            FUNCTION_RETURN_VOID(("SET_MPLOC - setConnectException.exception_nr(%s) is not CEE_SUCCESS",
-                            CliDebugSqlError(setConnectException.exception_nr)));
-        }
-    }
 
     if (catalog)
     {
@@ -621,24 +545,6 @@ JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_connect
                         CliDebugSqlError(setConnectException.exception_nr)));
     }
 
-    if(blnDoomUsrTxn)
-    {
-
-        odbc_SQLSvc_SetConnectionOption_sme_(NULL, NULL,
-                &setConnectException,
-                dialogueId,
-                CQD_DOOM_USER_TXN,
-                0,
-                NULL,
-                &sqlWarning);
-        if (setConnectException.exception_nr != CEE_SUCCESS)
-        {
-            throwSetConnectionException(jenv, &setConnectException);
-            FUNCTION_RETURN_VOID(("CQD_DOOM_USER_TXN - setConnectException.exception_nr(%s) is not CEE_SUCCESS",
-                            CliDebugSqlError(setConnectException.exception_nr)));
-        }
-    }
-
     odbc_SQLSvc_SetConnectionOption_sme_(NULL, NULL,
             &setConnectException,
             dialogueId,
@@ -669,40 +575,6 @@ JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_connect
         throwSetConnectionException(jenv, &setConnectException);
         FUNCTION_RETURN_VOID(("SQL_AUTOCOMMIT - setConnectException.exception_nr(%s) is not CEE_SUCCESS",
                         CliDebugSqlError(setConnectException.exception_nr)));
-    }
-    // MFC if mfc is on set the recompilation warnings on
-    // to help remove stale modules
-    if (srvrGlobal->moduleCaching == 1)
-    {
-        odbc_SQLSvc_SetConnectionOption_sme_(NULL, NULL,
-                &setConnectException,
-                dialogueId,
-                SQL_RECOMPILE_WARNING,
-                0,
-                NULL,
-                &sqlWarning
-        );
-
-        if (setConnectException.exception_nr != CEE_SUCCESS)
-        {
-            throwSetConnectionException(jenv, &setConnectException);
-            FUNCTION_RETURN_VOID(("SQL_RECOMPILE_WARNING - setConnectException.exception_nr(%s) is not CEE_SUCCESS",
-                            CliDebugSqlError(setConnectException.exception_nr)));
-        }
-        //MFC support for BigNum
-        odbc_SQLSvc_SetConnectionOption_sme_(NULL, NULL,&setConnectException,dialogueId,
-                SET_SESSION_INTERNAL_IO,0,NULL,
-                &sqlWarning);
-
-        if (setConnectException.exception_nr != CEE_SUCCESS)
-
-        {
-            throwSetConnectionException(jenv, &setConnectException);
-            FUNCTION_RETURN_VOID(("Set Session internal_format_io failure setConnectException.exception_nr(%s) is not CEE_SUCCESS",
-                            CliDebugSqlError(setConnectException.exception_nr)));
-
-        }
-
     }
 
 //    printf("Native statisticsIntervalTime :%ld\n", statisticsIntervalTime);
@@ -820,7 +692,7 @@ JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_connect
 
 JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_connectReuse
 (JNIEnv *jenv, jobject jobj, jstring server, jlong dialogueId, jint conReuseBitMap, jstring catalog,
-        jstring schema, jstring mploc, jint transactionIsolation)
+        jstring schema, jint transactionIsolation)
 {
     FUNCTION_ENTRY("Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_connectReuse",("..."));
     DEBUG_OUT(DEBUG_LEVEL_ENTRY,("  jenv=0x%08x, server=%s, dialogueId=0x%08x",
@@ -833,14 +705,11 @@ JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_connect
                     DebugJString(jenv,catalog)));
     DEBUG_OUT(DEBUG_LEVEL_ENTRY,("  schema=%s",
                     DebugJString(jenv,schema)));
-    DEBUG_OUT(DEBUG_LEVEL_ENTRY,("  mploc=%s",
-                    DebugJString(jenv,mploc)));
     DEBUG_OUT(DEBUG_LEVEL_ENTRY,("  transactionIsolation=%ld",
                     transactionIsolation));
 
     const char *nCatalog;
     const char *nSchema;
-    const char *nMploc;
     jthrowable exception;
 
     jclass jcls = JNI_GetObjectClass(jenv,jobj);
@@ -852,8 +721,6 @@ JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_connect
     nCatalog = JNI_GetStringUTFChars(jenv,catalog, NULL);
     if (schema)
     nSchema = JNI_GetStringUTFChars(jenv,schema, NULL);
-    if (mploc)
-    nMploc = JNI_GetStringUTFChars(jenv,mploc, NULL);
 
     // Need to reset all if any CONTROL cmds were issued
     if (conReuseBitMap & org_apache_trafodion_jdbc_t2_SQLMXConnection_SQL_CONTROL_FLAG)
@@ -902,42 +769,6 @@ JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_connect
                             CliDebugSqlError(setConnectException.exception_nr)));
         }
         // new code end
-
-        if (srvrGlobal->nowaitOn == 2)
-        {
-            odbc_SQLSvc_SetConnectionOption_sme_(NULL, NULL,
-                    &setConnectException,
-                    dialogueId,
-                    SET_OLT_QUERY_OPT,
-                    0,
-                    NULL,
-                    &sqlWarning);
-            if (setConnectException.exception_nr != CEE_SUCCESS)
-            {
-                throwSetConnectionException(jenv, &setConnectException);
-                FUNCTION_RETURN_VOID(("SET_OLT_QUERY_OPT - setConnectException.exception_nr(%s) is not CEE_SUCCESS",
-                                CliDebugSqlError(setConnectException.exception_nr)));
-            }
-        }
-
-        if (mploc)
-        {
-            odbc_SQLSvc_SetConnectionOption_sme_(NULL, NULL,
-                    &setConnectException,
-                    dialogueId,
-                    SET_MPLOC,
-                    0,
-                    (char *)nMploc,
-                    &sqlWarning);
-            JNI_ReleaseStringUTFChars(jenv,mploc, nMploc);
-
-            if (setConnectException.exception_nr != CEE_SUCCESS)
-            {
-                throwSetConnectionException(jenv, &setConnectException);
-                FUNCTION_RETURN_VOID(("SET_MPLOC - setConnectException.exception_nr(%s) is not CEE_SUCCESS",
-                                CliDebugSqlError(setConnectException.exception_nr)));
-            }
-        }
 
         if (catalog)
         {
@@ -1151,17 +982,6 @@ JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_setChar
     FUNCTION_RETURN_VOID((NULL));
 }
 
-//Sol. 10-100618-1186
-/*
- * Class:     org_apache_trafodion_jdbc_t2_SQLMXConnection
- * Method:    clearSetOfCQDs
- * Signature: ()V
- */
-JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_clearSetOfCQDs
-(JNIEnv *jenv, jobject obj, jlong dialogueId)
-{
-    FUNCTION_ENTRY("Java_org_apache_trafodion_jdbc_t2_SQLMXConnection_clearSetOfCQDs",("..."));
-//cleare CQD's upon a logical connection close.
-    ((SRVR_CONNECT_HDL*)dialogueId)->listOfCQDs.clear();
-    FUNCTION_RETURN_VOID((NULL));
+#ifdef __cplusplus
 }
+#endif

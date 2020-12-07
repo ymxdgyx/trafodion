@@ -113,7 +113,7 @@ static void generateKeyExpr(const ValueIdSet & externalInputs,
 			    Generator* generator,
                             NABoolean replicatePredicates = FALSE)
   {
-  ItemExpr * keyExpr;
+  BiRelat * keyExpr;
   CollIndex keyCount = listOfKeyColumns.entries();
 
   for (CollIndex keyNum = 0; keyNum < keyCount; keyNum++)
@@ -128,6 +128,10 @@ static void generateKeyExpr(const ValueIdSet & externalInputs,
       keyExpr = new(generator->wHeap()) BiRelat(ITM_EQUAL,
 						ieKeyCol,
 						ieKeyVal);
+
+      // Bind it so potential incompatible data type issues are handled
+      keyExpr->setSpecialNulls(TRUE);  // allow NULL ieKeyVal
+      keyExpr->bindNode(generator->getBindWA());
 
       // Synthesize its type for and assign a ValueId to it.
       keyExpr->synthTypeAndValueId();
@@ -2850,6 +2854,10 @@ short DDLExpr::ddlXnsInfo(NABoolean &isDDLxn, NABoolean &xnCanBeStarted)
      if (purgedata() || upgradeRepos())
         // transaction will be started and commited in called methods.
         xnCanBeStarted = FALSE;
+
+     if (initHbase() && producesOutput())  // returns status
+       xnCanBeStarted = FALSE;
+
      if ((ddlNode && ddlNode->castToStmtDDLNode() &&
           ddlNode->castToStmtDDLNode()->ddlXns()) &&
             ((ddlNode->getOperatorType() == DDL_CLEANUP_OBJECTS) ||
@@ -2858,9 +2866,11 @@ short DDLExpr::ddlXnsInfo(NABoolean &isDDLxn, NABoolean &xnCanBeStarted)
              (ddlNode->getOperatorType() == DDL_CREATE_INDEX) ||
              (ddlNode->getOperatorType() == DDL_POPULATE_INDEX) ||
              (ddlNode->getOperatorType() == DDL_ALTER_TABLE_ALTER_COLUMN_DATATYPE) ||
+             (ddlNode->getOperatorType() == DDL_ALTER_TABLE_ADD_CONSTRAINT_PRIMARY_KEY) ||
              (ddlNode->getOperatorType() == DDL_ALTER_TABLE_ALTER_HBASE_OPTIONS) ||
              (ddlNode->getOperatorType() == DDL_ALTER_INDEX_ALTER_HBASE_OPTIONS) ||
-             (ddlNode->getOperatorType() == DDL_ALTER_TABLE_RENAME)))
+             (ddlNode->getOperatorType() == DDL_ALTER_TABLE_RENAME) ||
+             (ddlNode->getOperatorType() == DDL_ON_HIVE_OBJECTS)))
      {
         // transaction will be started and commited in called methods.
         xnCanBeStarted = FALSE;
@@ -4198,7 +4208,8 @@ RelExpr * FileScan::preCodeGen(Generator * generator,
         {
           // assign individual files and blocks to each ESPs
           ((NodeMap *) getPartFunc()->getNodeMap())->assignScanInfos(hiveSearchKey_);
-          generator->setProcessLOB(TRUE);
+          if (CmpCommon::getDefault(USE_LIBHDFS) == DF_ON)
+             generator->setProcessLOB(TRUE);
 	  
 	  // flag set for HBase scan in HbaseAccess::preCodeGen
 	  // unique scan unlikely for hive scans except 
@@ -4224,6 +4235,22 @@ RelExpr * FileScan::preCodeGen(Generator * generator,
      getGroupAttr()->getCharacteristicInputs());
 
   generator->oltOptInfo()->mayDisableOperStats(&oltOptInfo());
+  if (isHbaseTable() || isSeabaseTable()) {
+     int beginTransForSelect = ActiveSchemaDB()->getDefaults().getAsLong(BEGIN_TRANSACTION_FOR_SELECT);
+     switch (beginTransForSelect) {
+        case 2: 
+           if (accessOptions().accessType() != TransMode::SKIP_CONFLICT_ACCESS_
+             && accessOptions().accessType() != TransMode::READ_UNCOMMITTED_ACCESS_)
+              generator->setTransactionFlag(TRUE);
+           // no break here because the transaction is required for updatable select when it is 2
+        case 1:
+           if (generator->updatableSelect())
+              generator->setTransactionFlag(TRUE);
+           break;
+        default:
+           break;
+     }
+  }
   markAsPreCodeGenned();
   return this;
 } // FileScan::preCodeGen()
@@ -4312,7 +4339,23 @@ RelExpr * GenericUpdate::preCodeGen(Generator * generator,
     generator->oltOptInfo()->setOltEidLeanOpt(FALSE);
     oltOptInfo().setOltEidLeanOpt(FALSE);
   }
+ if (updateCurrentOf())
+    generator->setAqrEnabled(FALSE);
 
+
+ if ((((NATable*)getTableDesc()->getNATable())->getTableType() == ExtendedQualName::GHOST_TABLE) &&
+
+     (Get_SqlParser_Flags(INTERNAL_QUERY_FROM_EXEUTIL)) &&
+
+     (CmpCommon::getDefault(AUTO_QUERY_RETRY) == DF_SYSTEM) &&
+
+     (NOT generator->aqrEnabled()))
+
+   {
+
+     generator->setAqrEnabled(TRUE);
+
+   }
   // Accumulate the values that are provided as inputs by my parent
   // together with the values that are produced as outputs by my
   // children. Use these values for rewriting the VEG expressions.
@@ -4516,11 +4559,27 @@ RelExpr * GenericUpdate::preCodeGen(Generator * generator,
   if (updateCurrentOf())
     generator->setAqrEnabled(FALSE);
 
+
+  if ((((NATable*)getTableDesc()->getNATable())->getTableType() == ExtendedQualName::GHOST_TABLE) &&
+
+      (Get_SqlParser_Flags(INTERNAL_QUERY_FROM_EXEUTIL)) &&
+
+      (CmpCommon::getDefault(AUTO_QUERY_RETRY) == DF_SYSTEM) &&
+
+      (NOT generator->aqrEnabled()))
+
+    {
+
+      generator->setAqrEnabled(TRUE);
+
+    }
   if (getTableDesc()->getNATable()->hasLobColumn())
     {
       oltOptInfo().setOltOpt(FALSE);
       generator->oltOptInfo()->setOltOpt(FALSE);
-      generator->setAqrEnabled(FALSE);
+      //enabling AQR to take care of the lock conflict error 8558 that
+      // should be retried.
+      //      generator->setAqrEnabled(FALSE);
       generator->setUpdAbortOnError(TRUE);
       generator->setUpdSavepointOnError(FALSE);
     }
@@ -5473,7 +5532,6 @@ RelExpr * HiveInsert::preCodeGen(Generator * generator,
     return this;
 
   generator->setHiveAccess(TRUE);
-  generator->setProcessLOB(TRUE);
   return GenericUpdate::preCodeGen(generator, externalInputs, pulledNewInputs);
 }
 
@@ -5738,19 +5796,9 @@ RelExpr * HbaseInsert::preCodeGen(Generator * generator,
   return this;
 }
 
-RelExpr * ExeUtilFastDelete::preCodeGen(Generator * generator,
-					const ValueIdSet & externalInputs,
-					ValueIdSet &pulledNewInputs)
-{
-  if (nodeIsPreCodeGenned())
-    return this;
-
-  return ExeUtilExpr::preCodeGen(generator,externalInputs,pulledNewInputs);
-}
-
-RelExpr * ExeUtilHiveTruncate::preCodeGen(Generator * generator,
-                                          const ValueIdSet & externalInputs,
-                                          ValueIdSet &pulledNewInputs)
+RelExpr * ExeUtilHiveTruncateLegacy::preCodeGen(Generator * generator,
+                                                const ValueIdSet & externalInputs,
+                                                ValueIdSet &pulledNewInputs)
 {
   if (nodeIsPreCodeGenned())
     return this;
@@ -7520,6 +7568,98 @@ ItemExpr * AggrMinMax::preCodeGen(Generator * generator)
   return this;
 } // AggrMinMax::preCodeGen()
 
+ItemExpr *Overlaps::preCodeGen(Generator *generator)
+{
+  if (nodeIsPreCodeGenned())
+    return getReplacementExpr();
+
+  for (Int32 i = 0; i < getArity(); ++i)
+    {
+      if (child(i)) 
+        {
+          const NAType &type = 
+            child(i)->getValueId().getType();
+          const DatetimeType *operand = (DatetimeType *)&type;
+
+          if (type.getTypeQualifier() == NA_DATETIME_TYPE
+                 && (operand->getPrecision() == SQLDTCODE_DATE))
+            {
+              child(i) = new (generator->wHeap()) 
+                Cast(child(i), new (generator->wHeap()) 
+                     SQLTimestamp(generator->wHeap(), TRUE));
+
+              child(i)->bindNode(generator->getBindWA());
+            }
+        }
+    }
+
+  //General Rules:
+  //1) ... 2) ... 3) ... 
+  //4) if D1(child(0)) is the null value or if E1(child(1))<D1,
+  //   then let S1 = E1 and let T1 = D1.
+  //   Otherwise, let S1 = D1 and let T1 = E1.
+  //
+  ItemExpr *S1 = NULL;
+  ItemExpr *T1 = NULL;
+  S1 = generator->getExpGenerator()->createExprTree(
+      "CASE WHEN (@A2<@A1 OR @A1 IS NULL) THEN @A2 ELSE @A1 END"
+      , 0
+      , 2
+      , child(0), child(1)); 
+  T1 = generator->getExpGenerator()->createExprTree(
+      "CASE WHEN (@A2<@A1 OR @A1 IS NULL) THEN @A1 ELSE @A2 END"
+      , 0
+      , 2
+      , child(0), child(1));
+
+  child(0) = S1->bindNode(generator->getBindWA());
+  child(1) = T1->bindNode(generator->getBindWA());
+
+
+  //General Rules:
+  //1) ... 2) ... 3) ... 4) ... 5) ...
+  //6) if D2(child(2)) is the null value or if E2(child(3))<D2,
+  //   then let S2 = E2 and let T2 = D2.
+  //   Otherwise, let S2 = D2 and let T2 = E2.
+  //
+  ItemExpr *S2 = NULL;
+  ItemExpr *T2 = NULL;
+  S2 = generator->getExpGenerator()->createExprTree(
+      "CASE WHEN (@A2<@A1 OR @A1 IS NULL) THEN @A2 ELSE @A1 END"
+      , 0
+      , 2
+      , child(2), child(3)); 
+  T2 = generator->getExpGenerator()->createExprTree(
+      "CASE WHEN (@A2<@A1 OR @A1 IS NULL) THEN @A1 ELSE @A2 END"
+      , 0
+      , 2
+      , child(2), child(3));
+
+  child(2) = S2->bindNode(generator->getBindWA());
+  child(3) = T2->bindNode(generator->getBindWA());
+
+  ItemExpr *newExpr = 
+    generator->getExpGenerator()->createExprTree(
+  //General Rules:
+  //1) ... 2) ... 3) ... 4) ... 5) ... 6) ...
+  //7) The result of the <overlaps predicate> is 
+  //   the result of the following expression:
+        "(@A1 > @A3 AND NOT (@A1 >= @A4 AND @A2 >= @A4))"
+        " OR "
+        "(@A3 > @A1 AND NOT (@A3 >= @A2 AND @A4 >= @A2))"
+        " OR "
+        "(@A1 = @A3 AND (@A2 <> @A4 OR @A2=@A4))"
+        , 0
+        , 4
+        , child(0), child(1), child(2), child(3));
+
+  newExpr->bindNode(generator->getBindWA());
+  setReplacementExpr(newExpr->preCodeGen(generator));
+  markAsPreCodeGenned();
+  return getReplacementExpr();
+}
+
+
 ItemExpr * Between::preCodeGen(Generator * generator)
 {
   if (nodeIsPreCodeGenned())
@@ -8350,16 +8490,15 @@ ItemExpr * BiRelat::preCodeGen(Generator * generator)
 
       CMPASSERT(coll1==coll2);
 
-	  if (CollationInfo::isSystemCollation(coll1))
-	  {
-	    setCollationEncodeComp(TRUE);
+      if (CollationInfo::isSystemCollation(coll1))
+        {
+          setCollationEncodeComp(TRUE);
+          {
 
-	    {
-
-	      ItemExpr * newIe1 = child(0);
-	      ItemExpr * newIe2 = child(1);
+            ItemExpr * newIe1 = child(0);
+            ItemExpr * newIe2 = child(1);
 	      
-	      if (! (cType1 == cType2)) 
+            if (! (cType1 == cType2)) 
 	      {
 
 		NAType *resultType ;
@@ -8367,144 +8506,146 @@ ItemExpr * BiRelat::preCodeGen(Generator * generator)
 		Lng32 Prec= MAXOF(cType1.getStrCharLimit(), cType2.getStrCharLimit());
         	     
 		if (len != cType1.getMaxLenInBytesOrNAWChars()) 
-		{
-		  if (DFS2REC::isAnyVarChar(cType1.getFSDatatype()))
-		  {
-		    resultType = new (generator->wHeap())
-		      SQLVarChar(generator->wHeap(), CharLenInfo(Prec, len),
-				  cType1.supportsSQLnull(), 
-				  cType1.isUpshifted(),
-				  cType1.isCaseinsensitive(),
-				  cType1.getCharSet(),
-				  cType1.getCollation(),
-				  cType1.getCoercibility()
-				 );
-		  }
-		  else
-		  {
-		    resultType = new (generator->wHeap())
-		      SQLChar(generator->wHeap(), CharLenInfo(Prec, len),
-				  cType1.supportsSQLnull(), 
-				  cType1.isUpshifted(),
-				  cType1.isCaseinsensitive(),
-				  FALSE,
-				  cType1.getCharSet(),
-				  cType1.getCollation(),
-				  cType1.getCoercibility()
-				 );
-		  }
+                  {
+                    if (DFS2REC::isAnyVarChar(cType1.getFSDatatype()))
+                      {
+                        resultType = new (generator->wHeap())
+                          SQLVarChar( generator->wHeap(),
+                                      CharLenInfo(Prec, len),
+                                      cType1.supportsSQLnull(), 
+                                      cType1.isUpshifted(),
+                                      cType1.isCaseinsensitive(),
+                                      cType1.getCharSet(),
+                                      cType1.getCollation(),
+                                      cType1.getCoercibility()
+                                      );
+                      }
+                    else
+                      {
+                        resultType = new (generator->wHeap())
+                          SQLChar( generator->wHeap(),
+                                   CharLenInfo(Prec, len),
+                                   cType1.supportsSQLnull(), 
+                                   cType1.isUpshifted(),
+                                   cType1.isCaseinsensitive(),
+                                   FALSE,
+                                   cType1.getCharSet(),
+                                   cType1.getCollation(),
+                                   cType1.getCoercibility()
+                                   );
+                      }
 
-		  newIe1 = new(generator->wHeap()) Cast(newIe1,resultType);
-		}
+                    newIe1 = new(generator->wHeap()) Cast(newIe1,resultType);
+                  }
 
 		if (len != cType2.getMaxLenInBytesOrNAWChars()) 
-		{
-		  if (DFS2REC::isAnyVarChar(cType2.getFSDatatype()))
-		  {
-		    resultType = new (generator->wHeap())
-		      SQLVarChar(generator->wHeap(), CharLenInfo(Prec, len),
-				  cType2.supportsSQLnull(), 
-				  cType2.isUpshifted(),
-				  cType2.isCaseinsensitive(),
-				  cType2.getCharSet(),
-				  cType2.getCollation(),
-				  cType2.getCoercibility()
-				 );
-		  }
-		  else
-		  {
-		    resultType = new (generator->wHeap())
-		      SQLChar(generator->wHeap(), CharLenInfo(Prec, len),
-				  cType2.supportsSQLnull(), 
-				  cType2.isUpshifted(),
-				  cType2.isCaseinsensitive(),
-				  FALSE,
-				  cType2.getCharSet(),
-				  cType2.getCollation(),
-				  cType2.getCoercibility()
-				 );
-		  }
+                  {
+                    if (DFS2REC::isAnyVarChar(cType2.getFSDatatype()))
+                      {
+                        resultType = new (generator->wHeap())
+                          SQLVarChar( generator->wHeap(),
+                                      CharLenInfo(Prec, len),
+                                      cType2.supportsSQLnull(), 
+                                      cType2.isUpshifted(),
+                                      cType2.isCaseinsensitive(),
+                                      cType2.getCharSet(),
+                                      cType2.getCollation(),
+                                      cType2.getCoercibility()
+                                      );
+                      }
+                    else
+                      {
+                        resultType = new (generator->wHeap())
+                          SQLChar( generator->wHeap(),
+                                   CharLenInfo(Prec, len),
+                                   cType2.supportsSQLnull(), 
+                                   cType2.isUpshifted(),
+                                   cType2.isCaseinsensitive(),
+                                   FALSE,
+                                   cType2.getCharSet(),
+                                   cType2.getCollation(),
+                                   cType2.getCoercibility()
+                                   );
+                      }
 
-		  newIe2 = new(generator->wHeap()) Cast(newIe2,resultType);
-		}
+                    newIe2 = new(generator->wHeap()) Cast(newIe2,resultType);
+                  }
 	      }
 
-	      ItemExpr * newEncode;
+            ItemExpr * newEncode;
 	      
-	      newEncode = 
-		    new(generator->wHeap()) 
-		    CompEncode(newIe1,FALSE, -1, CollationInfo::Compare);
+            newEncode = 
+              new(generator->wHeap()) 
+              CompEncode(newIe1,FALSE, -1, CollationInfo::Compare);
 
-	      newEncode->bindNode(generator->getBindWA());
-	      newEncode = newEncode->preCodeGen(generator);
-	      if (!newEncode)
-		return NULL;
-	      setChild(0, newEncode);
+            newEncode->bindNode(generator->getBindWA());
+            newEncode = newEncode->preCodeGen(generator);
+            if (!newEncode)
+              return NULL;
+            setChild(0, newEncode);
 
+            newEncode = 
+              new(generator->wHeap()) 
+              CompEncode(newIe2, FALSE, -1,CollationInfo::Compare);
 
-	      newEncode = 
-		    new(generator->wHeap()) 
-		    CompEncode(newIe2, FALSE, -1,CollationInfo::Compare);
+            newEncode->bindNode(generator->getBindWA());
+            newEncode = newEncode->preCodeGen(generator);
+            if (!newEncode)
+              return NULL;
+            setChild(1, newEncode);
+          }
 
-	      newEncode->bindNode(generator->getBindWA());
-	      newEncode = newEncode->preCodeGen(generator);
-	      if (!newEncode)
-		return NULL;
-	      setChild(1, newEncode);
-	    }
+        }
+      else
+        {
+          // update both operands if case insensitive comparions
+          // are to be done.
 
-	  }
-	  else
-	  {
-	     // update both operands if case insensitive comparions
-	     // are to be done.
+          NABoolean doCIcomp =
+            ((cType1.isCaseinsensitive()) && (cType2.isCaseinsensitive()));
 
-	    NABoolean doCIcomp =
-	      ((cType1.isCaseinsensitive()) && (cType2.isCaseinsensitive()));
+          ItemExpr * newChild = NULL;
+          if ((doCIcomp) &&
+              (NOT cType1.isUpshifted()))
+            {
+              newChild = child(0);
 
-	    ItemExpr * newChild = NULL;
-	    if ((doCIcomp) &&
-		(NOT cType1.isUpshifted()))
-	      {
-		newChild = child(0);
+              // Add UPPER except if it is NULL constant value.
+              if (newChild->getOperatorType() != ITM_CONSTANT || !((ConstValue *)newChild)->isNull())
+                newChild = new (generator->wHeap()) Upper(newChild);
 
-		// Add UPPER except if it is NULL constant value.
-		if (newChild->getOperatorType() != ITM_CONSTANT || !((ConstValue *)newChild)->isNull())
-		    newChild = new (generator->wHeap()) Upper(newChild);
+              newChild = newChild->bindNode(generator->getBindWA());
+              if (! newChild || generator->getBindWA()->errStatus())
+                return NULL;
 
-		newChild = newChild->bindNode(generator->getBindWA());
-		if (! newChild || generator->getBindWA()->errStatus())
-		  return NULL;
+              newChild = newChild->preCodeGen(generator);
+              if (! newChild)
+                return NULL;
 
-		newChild = newChild->preCodeGen(generator);
-		if (! newChild)
-		  return NULL;
+              setChild(0, newChild);
+            }
 
-		setChild(0, newChild);
-	      }
+          if ((doCIcomp) &&
+              (NOT cType2.isUpshifted()))
+            {
+              newChild = child(1);
 
-	    if ((doCIcomp) &&
-		(NOT cType2.isUpshifted()))
-	      {
-		newChild = child(1);
+              // Add UPPER except if it is NULL constant value.
+              if (newChild->getOperatorType() != ITM_CONSTANT || !((ConstValue *)newChild)->isNull())
+                newChild = new (generator->wHeap()) Upper(newChild);
 
-		// Add UPPER except if it is NULL constant value.
-		if (newChild->getOperatorType() != ITM_CONSTANT || !((ConstValue *)newChild)->isNull())
-		    newChild = new (generator->wHeap()) Upper(newChild);
+              newChild = newChild->bindNode(generator->getBindWA());
+              if (! newChild || generator->getBindWA()->errStatus())
+                return NULL;
 
-		newChild = newChild->bindNode(generator->getBindWA());
-		if (! newChild || generator->getBindWA()->errStatus())
-		  return NULL;
+              newChild = newChild->preCodeGen(generator);
+              if (! newChild)
+                return NULL;
 
-		newChild = newChild->preCodeGen(generator);
-		if (! newChild)
-		  return NULL;
-
-		setChild(1, newChild);
-	      }
-	    }
-	  }
-
+              setChild(1, newChild);
+            }
+        }
+    }
 
   // following is for simple types.
   const NAType &type1B =
@@ -9938,17 +10079,48 @@ ItemExpr * MathFunc::preCodeGen(Generator * generator)
   if (nodeIsPreCodeGenned())
     return this;
 
+  // for ROUND, if the first operand is a BigNum, don't cast
+  // the children to DOUBLE PRECISION; but do make sure the
+  // second operand is an integer
+  NABoolean castIt = TRUE;
+  if (getOperatorType() == ITM_ROUND)
+    {
+      const NAType &typ0 = child(0)->getValueId().getType();
+      if (((const NumericType &)typ0).isBigNum())
+        {
+          castIt = FALSE;
+
+          if (getArity() > 1)
+            {
+              const NumericType &typ1 = (const NumericType &)child(1)->getValueId().getType();
+              if (!typ1.isInteger() || !DFS2REC::isBinaryNumeric(typ1.getFSDatatype()))
+                {
+                  child(1) = new (generator->wHeap())
+                    Cast(child(1),
+                     new (generator->wHeap()) SQLLargeInt(
+                      generator->wHeap(), 
+                      typ1.isSigned(), 
+                      typ1.supportsSQLnullLogical()));
+                  child(1)->bindNode(generator->getBindWA());
+                }
+            }
+        }
+    }
+
   for (Int32 i = 0; i < getArity(); i++)
     {
-      const NAType &typ = child(i)->getValueId().getType();
+      if (castIt)
+        {
+          const NAType &typ = child(i)->getValueId().getType();
 
-      // Insert a cast node to convert child to a double precision.
-      child(i) = new (generator->wHeap())
-	Cast(child(i),
+          // Insert a cast node to convert child to a double precision.
+          child(i) = new (generator->wHeap())
+	    Cast(child(i),
 	     new (generator->wHeap()) SQLDoublePrecision(
 		  generator->wHeap(), typ.supportsSQLnullLogical()));
 
-      child(i)->bindNode(generator->getBindWA());
+          child(i)->bindNode(generator->getBindWA());
+        }
 
       child(i) = child(i)->preCodeGen(generator);
       if (! child(i).getPtr())
@@ -12370,5 +12542,41 @@ RelExpr * ExeUtilOrcFastAggr::preCodeGen(Generator * generator,
   markAsPreCodeGenned();
   
   // Done.
+  return this;
+}
+
+ItemExpr * SplitPart::preCodeGen(Generator *generator)
+{
+  if (nodeIsPreCodeGenned())
+    return this;
+
+  child(0) = child(0)->preCodeGen(generator);
+  if (! child(0).getPtr())
+    return NULL;
+
+  child(1) = child(1)->preCodeGen(generator);
+  if (! child(1).getPtr())
+    return NULL;
+
+  for (Int32 i = 2; i < getArity(); i++)
+    {
+      if (child(i))
+        {
+          const NAType &typ1 = child(i)->getValueId().getType();
+          
+          //Insert a cast node to convert child to an INT.
+          child(i) = new (generator->wHeap())
+            Cast(child(i), new (generator->wHeap()) SQLInt(generator->wHeap(), TRUE,
+                                                         typ1.supportsSQLnullLogical()));
+
+          child(i)->bindNode(generator->getBindWA());
+          child(i) = child(i)->preCodeGen(generator);
+          if (! child(i).getPtr())
+            return NULL;
+
+        }
+    }
+
+  markAsPreCodeGenned();
   return this;
 }

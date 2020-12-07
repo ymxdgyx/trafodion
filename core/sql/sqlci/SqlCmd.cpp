@@ -77,6 +77,7 @@
 #include "SqlciList_templ.h"
 #include "ComCextMisc.h"
 #include "ComCextdecs.h"
+#include "conversionHex.h"
 
 #include "ComQueue.h"
 #include "ExExeUtilCli.h"
@@ -1671,6 +1672,7 @@ short SqlCmd::doDescribeInput(SqlciEnv * sqlci_env,
                   
                   rec_datetime_field dtStartField = REC_DATE_YEAR;
                   rec_datetime_field dtEndField = REC_DATE_SECOND;
+                  Lng32 intLeadPrec = SQLInterval::DEFAULT_LEADING_PRECISION;
                   if (datatype == REC_DATETIME)
                     {
                       Lng32 dtCode;
@@ -1701,12 +1703,28 @@ short SqlCmd::doDescribeInput(SqlciEnv * sqlci_env,
                           dtEndField = REC_DATE_SECOND;
                         }
                      }
+                  else if (DFS2REC::isInterval(datatype))
+                    {
+                      getIntervalFields(datatype, dtStartField, dtEndField);
+
+                      // this will get fractional precision
+                      retcode = SQL_EXEC_GetDescItem(input_desc, entry,
+                                                     SQLDESC_PRECISION,
+                                                     &precision, 0, 0, 0, 0);
+                      HandleCLIError(retcode, sqlci_env);
+
+                      // this will get interval leading precision
+                      retcode = SQL_EXEC_GetDescItem(input_desc, entry,
+                                                     SQLDESC_INT_LEAD_PREC,
+                                                     &intLeadPrec, 0, 0, 0, 0);
+                      HandleCLIError(retcode, sqlci_env);
+                    }
 
 		  NAType::convertTypeToText(tgttype,
 					    datatype, length, precision, scale,
 					    dtStartField, dtEndField,
 					    (short)precision,
-					    SQLInterval::DEFAULT_LEADING_PRECISION,
+                                            (short)intLeadPrec,
 					    FALSE/*upshift*/,
 					    FALSE/*caseinsensitive*/,
 					    (CharInfo::CharSet) charSet,
@@ -2662,6 +2680,8 @@ Lng32 Execute::storeParams(char* argument_, short &num_params,
   {
     NABoolean literal = TRUE;    // if this arg is a literal, set it to 1
                               // otherwise, set it to 0.  It's set to 1 as default.
+
+    NABoolean isHex = FALSE;
     while (isspace((unsigned char)*args)) args++;  // For VS2003
 
     if (num_params >= MAX_NUM_UNNAMED_PARAMS)
@@ -2749,7 +2769,6 @@ Lng32 Execute::storeParams(char* argument_, short &num_params,
                       }
                     }
 
-
 		    if (i >= MAX_LEN_UNNAMED_PARAM)
 		    {
 		      *args = '\0';		// terminate errarg
@@ -2769,6 +2788,57 @@ Lng32 Execute::storeParams(char* argument_, short &num_params,
 		    }
 		  }
 		  break;
+
+      case 'x':
+      case 'X':
+        {
+          // if this is a hex string, convert to hex and break out.
+          // hex literal format:  x'hexval'
+          //          Int32 arglen = strlen(args);
+          //          if ((arglen > (1 + 1 + 1)) &&
+          if (args[1] && args[1] == '\'')
+            {
+              Int32 j = 2;
+              Int32 arglen = 0;
+              while (args[j] && (NOT isHex) && (j < MAX_LEN_UNNAMED_PARAM))
+                {
+                  if (args[j] == '\'')
+                    {
+                      NAWString pvalue_in_wchar(CharInfo::ISO88591, 
+                                                &args[2], arglen);
+                      void* result = NULL;
+                      enum hex_conversion_code code = 
+                        verifyAndConvertHex(pvalue_in_wchar, 
+                                            pvalue_in_wchar.length(), 
+                                            L'\'', CharInfo::ISO88591, 
+                                            &sqlci_Heap, result);
+                      if (code == INVALID)
+                        {
+                          return errorParams(-SQLCI_SYNTAX_ERROR, errarg);
+                        }
+                      
+                      NAString* conv_pvalue = (NAString*)result;
+                      
+                      str_cpy_all(param, (char*)conv_pvalue->data(), 
+                                  conv_pvalue->length());
+                      
+                      i = conv_pvalue->length();
+
+                      args += (1 + 1 + arglen + 1);
+                      isHex = TRUE;
+                    }
+                  else
+                    arglen++; 
+
+                  j++;
+                } // while
+
+              if (isHex)
+                break;
+            }
+
+          // fall through to default case.
+        }
 
       default:	  // Copy as is, including embedded squotes and blanks
 		  // (leading blanks were already removed above),
@@ -2835,7 +2905,11 @@ Lng32 Execute::storeParams(char* argument_, short &num_params,
     //using_params
     if (!literal && !strcmp(param, "NULL"))
       using_params[num_params] = NULL;
-    else {
+    else if (isHex) {
+      using_params[num_params] = new char[i+1];
+      str_cpy_all(using_params[num_params], param, i);
+      using_params[num_params][i] = 0;
+    } else {
       using_params[num_params] = new char[i+1];
       strcpy(using_params[num_params], param);
     }

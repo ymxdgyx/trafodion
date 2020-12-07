@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/resource.h>
 
 
 #include "SCMVersHelp.h"
@@ -40,6 +41,7 @@
 
 const char *MyName;
 char ga_ms_su_c_port[MPI_MAX_PORT_NAME] = {0}; // connection port - not used
+bool GenCoreOnFailureExit = false;
 
 long trace_settings = 0;
 bool IsRealCluster = true;
@@ -60,6 +62,31 @@ CMonLog *MonLog = NULL;
 
 DEFINE_EXTERN_COMP_DOVERS(pstartd)
 DEFINE_EXTERN_COMP_PRINTVERS(pstartd)
+
+void mon_failure_exit( bool genCoreOnFailureExit )
+{
+    const char method_name[] = "mon_failure_exit";
+
+    char buf[MON_STRING_BUF_SIZE];
+    snprintf(buf, sizeof(buf), "[%s], Aborting! genCore=%d, GenCore=%d\n",
+             method_name, genCoreOnFailureExit, GenCoreOnFailureExit);
+    monproc_log_write(PSTARTD_FAILURE_EXIT_1, SQ_LOG_CRIT, buf);
+
+    if (genCoreOnFailureExit || GenCoreOnFailureExit)
+    {
+        // Generate a core file, abort is intentional
+        abort();
+    }
+    else
+    {
+        // Don't generate a core file, abort is intentional
+        struct rlimit limit;
+        limit.rlim_cur = 0;
+        limit.rlim_max = 0;
+        setrlimit(RLIMIT_CORE, &limit);
+        abort();
+    }
+}
 
 const char *ProcessTypeString( PROCESSTYPE type );
 
@@ -93,9 +120,6 @@ const char *MessageTypeString( MSGTYPE type )
         case MsgType_NodeJoining:
             str = "MsgType_NodeJoining";
             break;
-        case MsgType_NodePrepare:
-            str = "MsgType_NodePrepare";
-            break;
         case MsgType_NodeQuiesce:
             str = "MsgType_NodeQuiesce";
             break;
@@ -122,18 +146,6 @@ const char *MessageTypeString( MSGTYPE type )
             break;
         case MsgType_SpareUp:
             str = "MsgType_SpareUp";
-            break;
-        case MsgType_TmRestarted:
-            str = "MsgType_TmRestarted";
-            break;
-        case MsgType_TmSyncAbort:
-            str = "MsgType_TmSyncAbort";
-            break;
-        case MsgType_TmSyncCommit:
-            str = "MsgType_TmSyncCommit";
-            break;
-        case MsgType_UnsolicitedMessage:
-            str = "MsgType_UnsolicitedMessage";
             break;
         default:
             str = "MsgType - Undefined";
@@ -166,8 +178,6 @@ void localIONoticeCallback(struct message_def *recv_msg, int )
     case MsgType_NodeDown:
     case MsgType_NodeQuiesce:
     case MsgType_NodeJoining:
-    case MsgType_TmSyncAbort:
-    case MsgType_TmSyncCommit:
         if ( tracing )
         {
             trace_printf( "%s@%d CB Notice: Type=%d\n",
@@ -877,11 +887,14 @@ CPStartD::~CPStartD()
 
 CRequest * CPStartD::getReq ( )
 {
-    CRequest *req;
+    CRequest *req = NULL;
     CAutoLock autoLock(getLocker());
 
-    req = workQ_.front();
-    workQ_.pop_front();
+    if (workQ_.size())
+    {
+        req = workQ_.front();
+        workQ_.pop_front();
+    }
 
     return req;
 }
@@ -911,13 +924,13 @@ bool CPStartD::loadConfiguration( void )
         if ( ! ClusterConfig.LoadConfig() )
         {
             printf("[%s], Failed to load cluster configuration.\n", MyName);
-            abort();
+            exit(EXIT_FAILURE);
         }
     }
     else
     {
         printf( "[%s] Warning: No cluster.conf found\n",MyName);
-        abort();
+        exit(EXIT_FAILURE);
     }
 
     return true;
@@ -947,13 +960,19 @@ void CPStartD::startProcess( CPersistConfig *persistConfig )
     progArgs = persistConfig->GetProgramArgs();
     progArgc = persistConfig->GetProgramArgc();
 
+    char stdout[MAX_PROCESS_PATH];
+    const char *logpath = getenv("TRAF_LOG");
+    snprintf( stdout, sizeof(stdout)
+            , "%s/%s"
+            , logpath, progStdout.c_str() );
+
     if ( tracing )
     {
         trace_printf( "%s@%d Will start process: nid=%d, type=%s, name=%s, "
                       "prog=%s, stdout=%s, argc=%d, args=%s\n"
                     , method_name, __LINE__, MyNid
                     , ProcessTypeString(procType), procName.c_str()
-                    , progProgram.c_str(), progStdout.c_str()
+                    , progProgram.c_str(), stdout
                     , progArgc, progArgs.c_str());
     }
 
@@ -969,7 +988,7 @@ void CPStartD::startProcess( CPersistConfig *persistConfig )
                                       , procName.c_str()
                                       , progProgram.c_str()
                                       , ""
-                                      , progStdout.c_str()
+                                      , stdout
                                       , progArgc
                                       , progArgs.c_str()
                                     //  , argBegin
@@ -1113,9 +1132,10 @@ void CPStartD::startProcs ( bool requiresDTM )
                 break;
             case ProcessType_DTM:
             case ProcessType_PSD:
+            case ProcessType_NameServer:
             case ProcessType_Watchdog:
             default:
-                // Skip these, they are managed by DTM Lead and monitor processes
+                // Skip these, they are managed by the monitor
                 if ( tracing )
                 {
                     trace_printf("%s@%d Persist type %s NOT targeted for restart\n",
@@ -1153,7 +1173,7 @@ void TraceInit( int & argc, char **& argv )
     }
 
     // Determine trace file name
-    const char *tmpDir = getenv( "MPI_TMPDIR" );
+    const char *tmpDir = getenv( "TRAF_LOG" );
     snprintf( traceFileName, sizeof(traceFileName),
               "%s/pstartd.trace.%d", ((tmpDir != NULL) ? tmpDir : currentDir),
               getpid() );
@@ -1238,13 +1258,6 @@ int main (int argc, char *argv[])
     MyZid = monUtil.getZid();
     MyNid = monUtil.getNid();
     MyPid = monUtil.getPid();
-
-    // Set flag to indicate whether we are operating in a real cluster
-    // or a virtual cluster.
-    if ( getenv("SQ_VIRTUAL_NODES") )
-    {
-        IsRealCluster = false;
-    }
 
     MonLog = new CMonLog( "log4cxx.monitor.psd.config", "PSD", "alt.pstartd", MyPNID, MyNid, MyPid, MyName );
 

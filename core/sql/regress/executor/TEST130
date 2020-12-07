@@ -31,9 +31,7 @@
 --     (10/21/2014) - Created.
 -- 
 
--- remove after this is made the default.  
-cqd TRAF_BLOB_AS_VARCHAR 'OFF'; 
-cqd TRAF_CLOB_AS_VARCHAR 'OFF'; 
+
 
 
 ?section clnup
@@ -143,9 +141,11 @@ values((select * from t130lob1));
 
 --test empty_blob(), empty_clob()
 delete from t130lob2;
+insert into t130lob2 values(0,stringtolob('inserted row10'));
 insert into t130lob2 values (1, empty_blob());
 select lobtostring(c2,10) from t130lob2;
 delete from t130lob2;
+insert into t130lob2 values(0,stringtolob('inserted row10'));
 insert into t130lob2 values (1, empty_clob());
 select lobtostring(c2,10) from t130lob2;
 update t130lob2 set c2=stringtolob('inserted row11');
@@ -379,6 +379,10 @@ select lobtostring(c2, 40 ) from tlob130txt2;
 --should update with full poem
 update tlob130txt2 set c2=filetolob('hdfs:///user/trafodion/lobs/lob_input_d1.txt', append) where c1 = 3;
 select lobtostring(c2, 200 ) from tlob130txt2;
+update tlob130txt2 set c2=NULL where c1=3;
+select * from tlob130txt2;
+update tlob130txt2 set c2=filetolob('hdfs:///user/trafodion/lobs/lob_input_d1.txt', append) where c1 = 3;
+select lobtostring(c2, 200 ) from tlob130txt2;
 
 -- should see wrong text in the last few lines
 update tlob130txt2 set c2=filetolob('hdfs:///user/trafodion/lobs/lob_input_e1.txt') where c1 =3 ;
@@ -400,8 +404,7 @@ log;
 log LOG130;
 sh rm t130_extract_command;
 
-sh grep "^LOBH" TMP130 | sed "s/^/extract lobtofile(LOB '/g" | sed "s/$/' , 'hdfs:\/\/\/user/trafodion/lobs\/tlob130_txt2.txt');/g" >> t130_extract_command;
-
+sh grep "^LOBH" TMP130 | sed "s/^/extract lobtofile(LOB '/g" | sed "s/$/' , 'hdfs:\/\/\/user\/trafodion\/lobs\/tlob130_txt2.txt');/g" >> t130_extract_command;
 obey t130_extract_command;
 
 --binary input/update
@@ -416,7 +419,7 @@ log;
 
 log LOG130;
 sh rm t130_extract_command;
-sh grep "^LOBH" TMP130 | sed "s/^/extract lobtofile(LOB '/g" | sed "s/$/' , 'hdfs:\/\/\/user/trafodion/lobs\/tlob130_deep.jpg');/g" >> t130_extract_command;
+sh grep "^LOBH" TMP130 | sed "s/^/extract lobtofile(LOB '/g" | sed "s/$/' , 'hdfs:\/\/\/user\/trafodion\/lobs\/tlob130_deep.jpg');/g" >> t130_extract_command;
 obey t130_extract_command;
 
 update tlob130bin2 set c2=filetolob('anoush.jpg') ;
@@ -430,7 +433,7 @@ log;
 
 log LOG130;
 sh rm t130_extract_command;
-sh grep "^LOBH" TMP130 | sed "s/^/extract lobtofile(LOB '/g" | sed "s/$/' , 'hdfs:\/\/\/user/trafodion/lobs\/tlob130_anoush.jpg');/g" >> t130_extract_command;
+sh grep "^LOBH" TMP130 | sed "s/^/extract lobtofile(LOB '/g" | sed "s/$/' , 'hdfs:\/\/\/user\/trafodion\/lobs\/tlob130_anoush.jpg');/g" >> t130_extract_command;
 
 obey t130_extract_command;
 
@@ -481,7 +484,7 @@ log;
 
 log LOG130;
 sh rm t130_extract_command;
-sh grep "^LOBH" TMP130 | sed "s/^/extract lobtofile(LOB '/g" | sed "s/$/' , 'hdfs:\/\/\/user/trafodion/lobs\/tlob130_anoush2.jpg');/g" >> t130_extract_command;
+sh grep "^LOBH" TMP130 | sed "s/^/extract lobtofile(LOB '/g" | sed "s/$/' , 'hdfs:\/\/\/user\/trafodion\/lobs\/tlob130_anoush2.jpg');/g" >> t130_extract_command;
 obey t130_extract_command;
 
 -- combination blob and clob columns
@@ -499,6 +502,11 @@ log LOG130;
 sh rm t130_extract_command;
 sh grep "^LOBH" TMP130 | sed "s/^/extract lobtofile(LOB '/g" | sed "s/$/' , 'tlob130_anoush3.jpg',create,truncate);/g" >> t130_extract_command;
 obey t130_extract_command;
+
+--test alter 
+alter table tlob130bt add column c5 blob;
+--should show default value NULL
+select c5 from tlob130bt; 
 
 ?section lob_gc_cleanup
 log;

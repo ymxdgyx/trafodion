@@ -42,6 +42,12 @@ using namespace std;
 #define MEM_LOG_KEY( monpid ) ( (0x1234 << 16) + (monpid & 0xFFFF) )
 #define MEM_LOG_SIZE( entries ) ( sizeof(memLogHeader_t) + ( sizeof(memLogEntry_t) * entries ) )
 
+#define GENERATE_CORE true
+
+extern bool GenCoreOnFailureExit;
+
+extern void mon_failure_exit( bool genCoreOnFailureExit = false );
+
 // Used by monitor process
 int mon_log_write(int event_type, posix_sqlog_severity_t severity, char *evl_buf);
 
@@ -128,6 +134,8 @@ public:
         MON_REINTEGRATE_9,
         MON_UPDATE_CLUSTER_5,
         MON_UPDATE_CLUSTER_6,
+        MON_NSCONNTONEWMON_1,
+        MON_NSCONNTONEWMON_2
     };
 
 private:

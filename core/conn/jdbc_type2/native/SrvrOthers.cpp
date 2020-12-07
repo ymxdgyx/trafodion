@@ -93,9 +93,7 @@ odbc_SQLSvc_Prepare_sme_(   void *               objtag_,           /* In   */
                          SQLItemDescList_def      *outputDesc,      /* Out  */
                          ERROR_DESC_LIST_def      *sqlWarning,      /* Out  */
                          long                     *stmtId,          /* Out  */
-                         long                 *inputParamOffset,     /* Out   */
-                         char                 *moduleName,
-                         bool isISUD)
+                         long                 *inputParamOffset)     /* Out   */
 
 {
     FUNCTION_ENTRY_LEVEL(DEBUG_LEVEL_STMT, "odbc_SQLSvc_Prepare_sme_",(""));
@@ -174,14 +172,7 @@ odbc_SQLSvc_Prepare_sme_(   void *               objtag_,           /* In   */
     if (rc==SQL_SUCCESS){
     //Start Soln no:10-091103-5969
         jboolean stmtType_ = getSqlStmtType(sqlString->dataValue._buffer);
-        if(stmtType_ == JNI_TRUE && batchSize > 0 || srvrGlobal->moduleCaching == 0)
-        {
-            rc = pSrvrStmt->Prepare(sqlString, stmtType, holdability, queryTimeout,isISUD);
-        }
-        else
-        {
-            rc = pSrvrStmt->PrepareforMFC(sqlString, stmtType, holdability, queryTimeout,isISUD);
-        }
+        rc = pSrvrStmt->Prepare(sqlString, stmtType, holdability, queryTimeout);
     //End Soln no:10-091103-5969
     }
 
@@ -291,14 +282,14 @@ odbc_SQLSvc_ExecuteN_sme_(
         exception_->u.ParamError.ParamDesc = SQLSVC_EXCEPTION_INVALID_ROW_COUNT;
         FUNCTION_RETURN_VOID(("totalRowCount <= 0"));
     }
-
+/*
     if ((sqlStmtType & TYPE_SELECT) && totalRowCount > 1)
     {
         exception_->exception_nr = odbc_SQLSvc_ExecuteN_ParamError_exn_;
         exception_->u.ParamError.ParamDesc = SQLSVC_EXCEPTION_INVALID_ROW_COUNT_AND_SELECT;
         FUNCTION_RETURN_VOID(("sqlStmtType is TYPE_SELECT && totalRowCount > 1"));
     }
-
+*/
 
     /// For Modius.
     rc = pSrvrStmt->switchContext();
@@ -1196,14 +1187,6 @@ odbc_SQLSvc_SetConnectionOption_sme_(
         // Set default schema to null
         pConnect->DefaultSchema[0] =  '\0';
         break;
-        // MFC option to set recompilation warnings on
-    case SQL_RECOMPILE_WARNING:
-        strcpy(sqlString, "CONTROL QUERY DEFAULT RECOMPILATION_WARNINGS 'ON'");
-        break;
-        // MFC support for BigNum
-    case SET_SESSION_INTERNAL_IO:
-        strcpy(sqlString, "SET SESSION DEFAULT internal_format_io 'on'");
-        break;
     default:
         exception_->exception_nr = odbc_SQLSvc_SetConnectionOption_ParamError_exn_;
         exception_->u.ParamError.ParamDesc = SQLSVC_EXCEPTION_INVALID_CONNECTION_OPTION;
@@ -1250,115 +1233,6 @@ odbc_SQLSvc_SetConnectionOption_sme_(
     FUNCTION_RETURN_VOID((NULL));
 }
 
-
-/*
-* Synchronous method function prototype for
-* operation 'odbc_SQLSvc_PrepareFromModule'
-*/
-extern "C" void
-odbc_SQLSvc_PrepareFromModule_sme_(
-                                   /* In    */ void * objtag_
-                                   , /* In  */ const CEE_handle_def *call_id_
-                                   , /* Out   */ ExceptionStruct *exception_
-                                   , /* In  */ long dialogueId
-                                   , /* In  */ char *moduleName
-                                   , /* In  */ long moduleVersion
-                                   , /* In  */ long long moduleTimestamp
-                                   , /* In  */ char *stmtName
-                                   , /* In  */ short sqlStmtType
-                                   , /* In  */ long fetchSize
-                                   ,/* In   */ long batchSize
-                                   , /* In   */ long holdability
-                                   , /* Out   */ long *estimatedCost
-                                   , /* Out   */ SQLItemDescList_def *inputDesc
-                                   , /* Out   */ SQLItemDescList_def *outputDesc
-                                   , /* Out   */ ERROR_DESC_LIST_def *sqlWarning
-                                   , /* Out   */ long *stmtId
-                                   , /* Out   */ long *inputParamOffset
-                                   )
-{
-    FUNCTION_ENTRY("odbc_SQLSvc_PrepareFromModule_sme_",("... fetchSize=%ld, inputParamOffset=%ld",
-        fetchSize,
-        inputParamOffset));
-
-    SRVR_STMT_HDL *pSrvrStmt;
-    SQLRETURN rc;
-    ERROR_DESC_def error_desc;
-    long    sqlcode;
-
-    odbc_SQLSvc_SQLError ModuleError;
-    CLEAR_ERROR(ModuleError);
-
-    // Need to validate the stmtLabel
-    // Given a label find out the SRVR_STMT_HDL
-    if ((pSrvrStmt = createSrvrStmtForMFC(dialogueId, stmtName, &sqlcode, moduleName,
-        moduleVersion, moduleTimestamp, sqlStmtType, TRUE)) == NULL)
-    {
-        exception_->exception_nr = odbc_SQLSvc_PrepareFromModule_SQLError_exn_;
-        kdsCreateSQLErrorException(&ModuleError, 1);
-        kdsCopySQLErrorException(&ModuleError, SQLSVC_EXCEPTION_READING_FROM_MODULE_FAILED, sqlcode,
-            "HY000");
-        exception_->u.SQLError.errorList._length = ModuleError.errorList._length;
-        exception_->u.SQLError.errorList._buffer = ModuleError.errorList._buffer;
-        FUNCTION_RETURN_VOID(("createSrvrStmt() Failed"));
-    }
-
-    // Setup the output descriptors using the fetch size
-    pSrvrStmt->holdability = holdability;
-    pSrvrStmt->resetFetchSize(fetchSize);
-
-    rc = pSrvrStmt->setMaxBatchSize(batchSize);
-
-    // Prepare the statement
-    if(rc == SQL_SUCCESS)
-    {
-        rc = pSrvrStmt->PrepareFromModule(EXTERNAL_STMT);
-    }
-
-    switch (rc)
-    {
-    case SQL_SUCCESS:
-    case SQL_SUCCESS_WITH_INFO:
-        exception_->exception_nr = 0;
-        // Copy all the output parameters
-        *estimatedCost = pSrvrStmt->estimatedCost;
-        inputDesc->_length = pSrvrStmt->inputDescList._length;
-        inputDesc->_buffer = pSrvrStmt->inputDescList._buffer;
-        outputDesc->_length = pSrvrStmt->outputDescList._length;
-        outputDesc->_buffer = pSrvrStmt->outputDescList._buffer;
-        sqlWarning->_length = pSrvrStmt->sqlWarning._length;
-        sqlWarning->_buffer = pSrvrStmt->sqlWarning._buffer;
-        *stmtId = (long)pSrvrStmt;
-        *inputParamOffset = pSrvrStmt->inputDescParamOffset;
-        break;
-    case SQL_STILL_EXECUTING:
-        exception_->exception_nr = odbc_SQLSvc_PrepareFromModule_SQLStillExecuting_exn_;
-        break;
-    case ODBC_RG_ERROR:
-    case SQL_ERROR:
-        ERROR_DESC_def *error_desc_def;
-        error_desc_def = pSrvrStmt->sqlError.errorList._buffer;
-        if (pSrvrStmt->sqlError.errorList._length != 0 &&
-            (error_desc_def->sqlcode == -8007 || error_desc_def->sqlcode == -8007))
-        {
-            exception_->exception_nr = odbc_SQLSvc_PrepareFromModule_SQLQueryCancelled_exn_;
-            exception_->u.SQLQueryCancelled.sqlcode = error_desc_def->sqlcode;
-        }
-        else
-        {
-            exception_->exception_nr = odbc_SQLSvc_PrepareFromModule_SQLError_exn_;
-            exception_->u.SQLError.errorList._length = pSrvrStmt->sqlError.errorList._length;
-            exception_->u.SQLError.errorList._buffer = pSrvrStmt->sqlError.errorList._buffer;
-        }
-        break;
-    case PROGRAM_ERROR:
-        exception_->exception_nr = odbc_SQLSvc_PrepareFromModule_ParamError_exn_;
-        exception_->u.ParamError.ParamDesc = SQLSVC_EXCEPTION_PREPARE_FAILED;
-    default:
-        break;
-    }
-    FUNCTION_RETURN_VOID((NULL));
-}
 
 /*
 * Synchronous method function prototype for
@@ -1529,3 +1403,127 @@ odbc_SQLSvc_CloseUsingLabel_sme_(
     }
     FUNCTION_RETURN_VOID((NULL));
 }
+
+extern "C" void
+odbc_SQLSrvr_ExtractLob_sme_(
+    /* In    */ void *objtag_
+  , /* In    */ const CEE_handle_def *call_id_
+  , /* Out   */ odbc_SQLsrvr_ExtractLob_exc_ *exception_
+  , /* In    */ long dialogueId
+  , /* In    */ IDL_short extractLobAPI
+  , /* In    */ IDL_string lobHandle
+  , /* In    */ IDL_long_long &lobLength
+  , /* Out   */ IDL_long_long &extractLen
+  , /* Out   */ BYTE *& extractData
+  )
+{
+    char lobExtractQuery[1000] = {0};
+    long sqlcode;
+    SRVR_STMT_HDL  *QryLobExtractSrvrStmt = NULL;
+
+    if ((QryLobExtractSrvrStmt = createSrvrStmt(dialogueId, "MXOSRVR_EXTRACTLOB", &sqlcode, 
+			NULL, 0, 0, TYPE_UNKNOWN, false,false)) == NULL) 
+    {
+       exception_->exception_nr = odbc_SQLSvc_ExtractLob_SQLInvalidhandle_exn_;
+       return;
+    }
+    switch (extractLobAPI) {
+    case 0:
+        snprintf(lobExtractQuery, sizeof(lobExtractQuery), "EXTRACT LOBLENGTH(LOB'%s') LOCATION %llu", lobHandle, (Int64)&lobLength);
+        break;
+    case 1:
+        snprintf(lobExtractQuery, sizeof(lobExtractQuery), "EXTRACT LOBTOBUFFER(LOB'%s', LOCATION %llu, SIZE %llu)", lobHandle, extractData, &extractLen);
+        break;
+    case 2:
+        extractLen = 0;
+        snprintf(lobExtractQuery, sizeof(lobExtractQuery), "EXTRACT LOBTOBUFFER(LOB'%s', LOCATION %llu, SIZE %llu)", lobHandle, 0L, &extractLen);
+        break;
+    default:
+        return ;
+    }
+    SQLValue_def sqlStringValue;
+    sqlStringValue.dataValue._buffer = (unsigned char *)lobExtractQuery;
+    sqlStringValue.dataValue._length = strlen(lobExtractQuery);
+    sqlStringValue.dataCharset = 0;
+    sqlStringValue.dataType = SQLTYPECODE_VARCHAR;
+    sqlStringValue.dataInd = 0;
+
+    try
+    {
+        short retcode = QryLobExtractSrvrStmt->ExecDirect(NULL, &sqlStringValue, EXTERNAL_STMT, TYPE_CALL, SQL_ASYNC_ENABLE_OFF, 0);
+        if (retcode == SQL_ERROR)
+        {
+            ERROR_DESC_def *p_buffer = QryLobExtractSrvrStmt->sqlError.errorList._buffer;
+            exception_->exception_nr = odbc_SQLSvc_ExtractLob_SQLError_exn_;
+            exception_->u.SQLError.errorList._length = QryLobExtractSrvrStmt->sqlError.errorList._length;
+            exception_->u.SQLError.errorList._buffer = QryLobExtractSrvrStmt->sqlError.errorList._buffer;
+        }
+    }
+    catch (...)
+    {
+        exception_->exception_nr = odbc_SQLSvc_ExtractLob_ParamError_exn_;
+        exception_->u.ParamError.ParamDesc = SQLSVC_EXCEPTION_EXECDIRECT_FAILED;
+    }
+    if (QryLobExtractSrvrStmt != NULL) 
+        QryLobExtractSrvrStmt->Close(SQL_DROP);
+
+}
+
+extern "C" void
+odbc_SQLSrvr_UpdateLob_sme_(
+    /* In   */ void *objtag_
+  , /* In   */ const CEE_handle_def * call_id_
+  , /* In   */ odbc_SQLSvc_UpdateLob_exc_ * exception_
+  , /* In   */ long dialogueId
+  , /* In   */ IDL_string lobHandle
+  , /* In   */ IDL_long_long totalLength
+  , /* In   */ IDL_long_long offset
+  , /* In   */ IDL_long_long length
+  , /* In   */ BYTE * data)
+{
+    char lobUpdateQuery[1000] = {0};
+    long sqlcode;
+
+    SRVR_STMT_HDL * QryLobUpdateSrvrStmt = NULL;
+
+    if ((QryLobUpdateSrvrStmt = createSrvrStmt(dialogueId, "MXOSRVR_UPDATELOB", &sqlcode, 
+			NULL, 0, 0, TYPE_UNKNOWN, false,false)) == NULL) {
+        exception_->exception_nr = odbc_SQLSvc_UpdateLob_SQLInvalidhandle_exn_;
+	return;
+    }
+
+    if (offset == 0) {
+        snprintf(lobUpdateQuery, sizeof(lobUpdateQuery),  "UPDATE LOB (LOB'%s', LOCATION %Ld, SIZE %Ld)", lobHandle, (Int64)data, length);
+    } else {
+        snprintf(lobUpdateQuery, sizeof(lobUpdateQuery),  "UPDATE LOB (LOB'%s', LOCATION %Ld, SIZE %Ld, APPEND)", lobHandle, (Int64)data, length);
+    }
+
+    SQLValue_def sqlStringValue;
+    sqlStringValue.dataValue._buffer = (unsigned char *)lobUpdateQuery;
+    sqlStringValue.dataValue._length = strlen(lobUpdateQuery);
+    sqlStringValue.dataCharset = 0;
+    sqlStringValue.dataType = SQLTYPECODE_VARCHAR;
+    sqlStringValue.dataInd = 0;
+                                
+    short retcode = 0;
+    try {
+       retcode = QryLobUpdateSrvrStmt->ExecDirect(NULL, &sqlStringValue, EXTERNAL_STMT, TYPE_UNKNOWN, SQL_ASYNC_ENABLE_OFF, 0);
+
+       if (retcode == SQL_ERROR) {
+           exception_->exception_nr = odbc_SQLSvc_UpdateLob_SQLError_exn_;
+           exception_->u.SQLError.errorList._length = QryLobUpdateSrvrStmt->sqlError.errorList._length;
+           exception_->u.SQLError.errorList._buffer = QryLobUpdateSrvrStmt->sqlError.errorList._buffer;
+       }
+    }
+    catch (...)
+    {
+        exception_->exception_nr = odbc_SQLSvc_UpdateLob_ParamError_exn_;
+        exception_->u.ParamError.ParamDesc = SQLSVC_EXCEPTION_EXECUTE_FAILED;
+    }
+
+    if (QryLobUpdateSrvrStmt != NULL) {
+        QryLobUpdateSrvrStmt->Close(SQL_DROP);
+    }
+    return;
+}
+

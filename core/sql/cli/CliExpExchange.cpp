@@ -502,8 +502,8 @@ Descriptor::BulkMoveStatus Descriptor::checkBulkMoveStatusV1(
 	   ((NOT DFS2REC::isAnyCharacter(op->getDatatype())) &&
 	    (descItem.scale != op->getScale())) || 
 	   (descItem.length != op->getLength())        ||
-	   ((descItem.datatype >= REC_MIN_BINARY) &&
-	    (descItem.datatype <= REC_MAX_BINARY) &&
+	   ((descItem.datatype >= REC_MIN_BINARY_NUMERIC) &&
+	    (descItem.datatype <= REC_MAX_BINARY_NUMERIC) &&
 	    (((isInputDesc) &&
 	      (descItem.precision > 0)) ||
 	     ((NOT isInputDesc) &&
@@ -605,8 +605,8 @@ Descriptor::BulkMoveStatus Descriptor::checkBulkMoveStatusV2(
 	//   is greater than zero, and less than operand's precision or op's 
 	//   precision is zero.
          ||
-	   ((descItem.datatype >= REC_MIN_BINARY) &&
-            (descItem.datatype <= REC_MAX_BINARY) &&
+	   ((descItem.datatype >= REC_MIN_BINARY_NUMERIC) &&
+            (descItem.datatype <= REC_MAX_BINARY_NUMERIC) &&
 	    (((isInputDesc) &&
 	      (NOT isRWRS) &&
 	      (descItem.precision > 0)) ||
@@ -1067,8 +1067,7 @@ InputOutputExpr::outputValues(atp_struct *atp,
   char * dataPtr = 0;
   short entry = 0;
   
-  NABoolean byPassCheck = output_desc->isDescTypeWide();
-  if (!byPassCheck &&
+  if (!useParamIdx &&
     (getNumEntries() != output_desc->getUsedEntryCount()) &&
       (!output_desc->thereIsACompoundStatement())) 
     {
@@ -1159,19 +1158,25 @@ InputOutputExpr::outputValues(atp_struct *atp,
   while (clause) {
     if (clause->getType() == ex_clause::INOUT_TYPE) {
       entry++;
-	// TEMP TEMP TEMP
-	if(useParamIdx){
-	  entry = ((ex_inout_clause *)clause)->getParamIdx();
-	} 
-	// End of TEMP
+
+      if(useParamIdx){
+        entry = ((ex_inout_clause *)clause)->getParamIdx();
+
+        // avoid going off the end of the output descriptor (this can only
+        // happen for wide descriptors, as for non-wide descriptors we would
+        // have checked the descriptor size earlier; mxosrvr uses wide 
+        // descriptors all the time though so we have to check here)
+        if (entry /* 1-based */ > output_desc->getUsedEntryCount()) {
+          ExRaiseSqlError(heap, &diagsArea, CLI_STMT_EXCEEDS_DESC_COUNT);
+          if (diagsArea != atp->getDiagsArea())
+            atp->setDiagsArea(diagsArea);
+          return ex_expr::EXPR_ERROR;
+        }
+      }
 
       if ((NOT output_desc->bulkMoveDisabled()) &&
 	  (NOT output_desc->doSlowMove(entry)))
 	goto next_clause;
-
-      if(useParamIdx){
-	entry = ((ex_inout_clause *)clause)->getParamIdx();
-      } 
 
       operand = clause->getOperand(0);
  
@@ -2914,8 +2919,8 @@ InputOutputExpr::inputSingleRowValue(atp_struct *atp,
 		source = intermediate;
 	      } // sourceType == REC_BYTE_V_ANSI
 	    
-	    if ((sourceType >= REC_MIN_BINARY) &&
-		(sourceType <= REC_MAX_BINARY) &&
+	    if ((sourceType >= REC_MIN_BINARY_NUMERIC) &&
+		(sourceType <= REC_MAX_BINARY_NUMERIC) &&
 		(sourceType == operand->getDatatype()) &&
 		(sourcePrecision > 0) &&
 		(sourcePrecision == operand->getPrecision()))
@@ -4011,8 +4016,8 @@ InputOutputExpr::inputValues(atp_struct *atp,
 	      } // sourceType == REC_BYTE_V_ANSI
 	    
 	    if ((sourcePrecision > 0) &&
-		((sourceType >= REC_MIN_BINARY) &&
-                 (sourceType <= REC_MAX_BINARY) &&
+		((sourceType >= REC_MIN_BINARY_NUMERIC) &&
+                 (sourceType <= REC_MAX_BINARY_NUMERIC) &&
                  (sourceType == operand->getDatatype()) &&
                  (sourcePrecision == operand->getPrecision()) ||
                  (DFS2REC::isAnyCharacter(sourceType) && !suppressCharLimitCheck())))

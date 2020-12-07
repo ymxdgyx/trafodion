@@ -70,7 +70,7 @@ public class T4Driver extends T4Properties implements java.sql.Driver {
 			Object p[] = T4LoggingUtilities.makeParams(null,filterOutPWD(url));
 			t4GlobalLogger.logp(Level.FINE, "T4Driver", "acceptsURL", "", p);
 		}
-		if (getLogWriter() != null) {
+		if ( t4GlobalLogger.isLoggable(Level.FINE) && getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(null, filterOutPWD(url));
 			lr.setParameters(p);
@@ -116,7 +116,7 @@ public class T4Driver extends T4Properties implements java.sql.Driver {
 			Object p[] = T4LoggingUtilities.makeParams(null, filterOutPWD(url), tempinfo);
 			t4GlobalLogger.logp(Level.FINE, "T4Driver", "connect", "", p);
 		}
-		if (getLogWriter() != null) {
+		if ( t4GlobalLogger.isLoggable(Level.FINE) && getLogWriter() != null ) {
 			if (tempinfo == null) {
 				tempinfo = new Properties();
 				tempinfo.putAll(info);
@@ -169,8 +169,7 @@ public class T4Driver extends T4Properties implements java.sql.Driver {
 					}
 				}
 				if (getMaxPoolSize() != -1) {
-					key = getUrl() + getCatalog() + getSchema() + getUser() + getPassword() + getServerDataSource()
-							+ getBlobTableName() + getClobTableName();
+					key = getUrl() + getCatalog() + getSchema() + getUser() + getPassword() + getServerDataSource();
 	
 					ds = (TrafT4DataSource) dsCache_.get(key);
 	
@@ -205,7 +204,7 @@ public class T4Driver extends T4Properties implements java.sql.Driver {
 			t4GlobalLogger.logp(Level.FINE, "T4Driver", "getMajorVersion", "", p);
 		}
 		try {
-			if (getLogWriter() != null) {
+			if ( t4GlobalLogger.isLoggable(Level.FINE) && getLogWriter() != null ) {
 				LogRecord lr = new LogRecord(Level.FINE, "");
 				Object p[] = T4LoggingUtilities.makeParams(null);
 				lr.setParameters(p);
@@ -234,7 +233,7 @@ public class T4Driver extends T4Properties implements java.sql.Driver {
 			t4GlobalLogger.logp(Level.FINE, "T4Driver", "getMinorVersion", "", p);
 		}
 		try {
-			if (getLogWriter() != null) {
+			if ( t4GlobalLogger.isLoggable(Level.FINE) && getLogWriter() != null ) {
 				LogRecord lr = new LogRecord(Level.FINE, "");
 				Object p[] = T4LoggingUtilities.makeParams(null);
 				lr.setParameters(p);
@@ -279,7 +278,7 @@ public class T4Driver extends T4Properties implements java.sql.Driver {
 			Object p[] = T4LoggingUtilities.makeParams(null, filterOutPWD(url), tempinfo);
 			t4GlobalLogger.logp(Level.FINE, "T4Driver", "getPropertyInfo", "", p);
 		}
-		if (getLogWriter() != null) {
+		if ( t4GlobalLogger.isLoggable(Level.FINE) && getLogWriter() != null ) {
 			if(tempinfo == null){
 				tempinfo = new Properties();
 				tempinfo.putAll(info);
@@ -312,7 +311,7 @@ public class T4Driver extends T4Properties implements java.sql.Driver {
 			t4GlobalLogger.logp(Level.FINE, "T4Driver", "jdbcCompliant", "", p);
 		}
 		try {
-			if (getLogWriter() != null) {
+			if ( t4GlobalLogger.isLoggable(Level.FINE) && getLogWriter() != null ) {
 				LogRecord lr = new LogRecord(Level.FINE, "");
 				Object p[] = T4LoggingUtilities.makeParams(null);
 				lr.setParameters(p);

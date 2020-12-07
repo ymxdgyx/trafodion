@@ -470,6 +470,9 @@ short DDLExpr::codeGen(Generator * generator)
             ddl_ws_tdb->setReturnDetails(TRUE);
 
         }
+      else if (initHbase())
+        ddl_ws_tdb->setInitTraf(TRUE);
+
       ddl_tdb = ddl_ws_tdb;
     }
   else
@@ -2682,9 +2685,10 @@ short RelRoot::codeGen(Generator * generator)
     }
 
   
-  if (generator->processLOB())
-    root_tdb->setProcessLOB(TRUE);
- 
+  if (generator->processLOB()) {
+     root_tdb->setProcessLOB(TRUE);
+     root_tdb->setUseLibHdfs(CmpCommon::getDefault(USE_LIBHDFS) == DF_ON);
+  } 
 
   // Self-referencing updates
   if (avoidHalloween_)
@@ -3992,6 +3996,20 @@ short TupleList::codeGen(Generator * generator)
 	  ItemExpr * childNode = (ItemExpr *) tupleTree[j];
           if (castTo)
           {
+            const NAType &srcType = childNode->getValueId().getType();
+            const NAType &tgtType = castNode->getValueId().getType();
+
+            if ((hiveTextInsert()) &&
+                (DFS2REC::isBinaryString(tgtType.getFSDatatype())) &&
+                (NOT DFS2REC::isAnyCharacter(srcType.getFSDatatype())))
+              {
+                childNode = new(bindWA->wHeap()) 
+                  ZZZBinderFunction(ITM_TO_CHAR, childNode);
+                childNode = childNode->bindNode(bindWA);
+                if (bindWA->errStatus())
+                  return -1;            
+              }
+
 	    // When we have ins/upd target cols which are
 	    // MP NCHAR in MX-NSK-Rel1 (i.e., SINGLE-byte),
 	    // and the source was from a Tuple/TupleList,

@@ -53,6 +53,7 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Calendar;
 import java.util.Map;
+import java.util.HashMap;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 
@@ -780,14 +781,14 @@ public class TrafT4ResultSet extends TrafT4Handle implements java.sql.ResultSet 
 							"invalid_cast_specification", null);
 				}
 			}
-        case Types.BLOB:
-        case Types.CLOB:
-            x = getLocalString(columnIndex);
-            Blob blob = new TrafT4Blob(connection_, (String) x, null);
-            return blob.getBytes(1, (int)blob.length());
+                case Types.BLOB:
+                case Types.CLOB:
+                    x = getLocalString(columnIndex);
+                    Blob blob = new TrafT4Blob(connection_, (String) x, null);
+                    return blob.getBytes(1, (int)blob.length());
 		default:
-			throw TrafT4Messages.createSQLException(connection_.props_, connection_.getLocale(), "restricted_data_type",
-					null);
+                    throw TrafT4Messages.createSQLException(connection_.props_, connection_.getLocale(), "restricted_data_type",
+                                                            null);
 		}
 	}
 
@@ -846,12 +847,12 @@ public class TrafT4ResultSet extends TrafT4Handle implements java.sql.ResultSet 
 			} else {
 				return null;
 			}
-        case Types.BLOB:
-        case Types.CLOB:
-            Clob clob = getClob(columnIndex);
-            return clob.getCharacterStream(); 
+                case Types.BLOB:
+                case Types.CLOB:
+                    Clob clob = getClob(columnIndex);
+                    return clob.getCharacterStream(); 
 		default:
-			throw TrafT4Messages.createSQLException(connection_.props_, connection_.getLocale(), "restricted_data_type",
+                    throw TrafT4Messages.createSQLException(connection_.props_, connection_.getLocale(), "restricted_data_type",
 					null);
 		}
 
@@ -4598,12 +4599,7 @@ public class TrafT4ResultSet extends TrafT4Handle implements java.sql.ResultSet 
 			if (obj != null) {
 				if (obj instanceof byte[]) {
 					try {
-						if (this.irs_.ic_.getISOMapping() == InterfaceUtilities.SQLCHARSETCODE_ISO88591
-								&& !this.irs_.ic_.getEnforceISO()
-								&& sqlCharset == InterfaceUtilities.SQLCHARSETCODE_ISO88591)
-							data = new String((byte[]) obj, irs_.ic_.t4props_.getISO88591());
-						else
-							data = this.irs_.ic_.decodeBytes((byte[]) obj, sqlCharset);
+						data = this.irs_.ic_.decodeBytes((byte[]) obj, this.irs_.ic_.getTerminalCharset());
 
 						wasNull_ = false;
 					} catch (CharacterCodingException e) {
@@ -4615,11 +4611,6 @@ public class TrafT4ResultSet extends TrafT4Handle implements java.sql.ResultSet 
 					} catch (UnsupportedCharsetException e) {
 						SQLException se = TrafT4Messages.createSQLException(this.connection_.ic_.t4props_,
 								this.connection_.getLocale(), "unsupported_encoding", e.getCharsetName());
-						se.initCause(e);
-						throw se;
-					} catch (UnsupportedEncodingException e) {
-						SQLException se = TrafT4Messages.createSQLException(this.connection_.ic_.t4props_,
-								this.connection_.getLocale(), "unsupported_encoding", e.getMessage());
 						se.initCause(e);
 						throw se;
 					}
@@ -4705,8 +4696,6 @@ public class TrafT4ResultSet extends TrafT4Handle implements java.sql.ResultSet 
 		spj_rs_ = spj_result_set;
 		fetchComplete_ = false;
 		
-		this.checkJavaVersion();
-
 		seqNum_ = seqCount_++;
 		try {
 			irs_ = new InterfaceResultSet(this);
@@ -4750,8 +4739,6 @@ public class TrafT4ResultSet extends TrafT4Handle implements java.sql.ResultSet 
 		useOldDateFormat_ = oldDateFormat;
 		fetchComplete_ = false;
 		
-		this.checkJavaVersion();
-
 		seqNum_ = seqCount_++;
 		try {
 			irs_ = new InterfaceResultSet(this);
@@ -4761,16 +4748,6 @@ public class TrafT4ResultSet extends TrafT4Handle implements java.sql.ResultSet 
 		}
 	}
 	
-	private void checkJavaVersion() {
-		this._javaVersion = Float.parseFloat(System.getProperty("java.specification.version"));
-
-		if(_javaVersion >= 1.5) {
-			try {
-				this._toPlainString = java.math.BigDecimal.class.getMethod("toPlainString", (Class[]) null);
-			}catch(Exception e) {}
-		}
-	}
-
 	// Fields
 	InterfaceResultSet irs_;
 	TrafT4Desc[] outputDesc_;
@@ -4794,8 +4771,8 @@ public class TrafT4ResultSet extends TrafT4Handle implements java.sql.ResultSet 
 	int numRows_;
 	boolean isAfterLast_;
 	boolean isBeforeFirst_;
-	float _javaVersion;
-	Method _toPlainString;
+	private static float _javaVersion;
+	private static Method _toPlainString;
 
 	boolean noKeyFound_;
 	StringBuffer deleteCmd_;
@@ -4828,6 +4805,17 @@ public class TrafT4ResultSet extends TrafT4Handle implements java.sql.ResultSet 
 	boolean keepRawBuffer_;
 	byte[] rawBuffer_;
 	boolean fetchComplete_;
+	HashMap<String, Integer> colMap_;
+
+	static {
+		_javaVersion = Float.parseFloat(System.getProperty("java.specification.version"));
+		if (_javaVersion >= 1.5) {
+			try {
+				_toPlainString = java.math.BigDecimal.class.getMethod("toPlainString", (Class[]) null);
+			} catch(Exception e) {}
+		}
+	}
+
 	public Object unwrap(Class iface) throws SQLException {
 		// TODO Auto-generated method stub
 		return null;

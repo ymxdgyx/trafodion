@@ -193,6 +193,23 @@ prevented by the check option on view <name>.
 *Recovery:* Insert into the base table rather than this view.
 
 <<<
+[[SQL-8145]]
+== SQL 8145
+
+```
+This statement is not supported or incorrect options were specified. Reason: <reason>
+```
+
+Where <reason> is the reason for operation failure.
+
+*Cause:* You attempted to perform an operation with incorrect options
+or unsupported features.
+
+*Effect:* The operation fails.
+
+*Recovery:* Fix the error and re-issue the statement.
+
+<<<
 [[SQL-8302]]
 == SQL 8302
 
@@ -211,6 +228,24 @@ available partition.
 
 *Recovery:* Determine why none of the partitions were available, then
 correct the error and resubmit.
+
+<<<
+[[SQL-8457]]
+== SQL 8457
+
+```
+An unexpectedly long row was read from a Hive table. The row is too long to process.
+```
+
+*Cause:* A row was read from a Hive table that is longer than what was expected. To avoid
+buffer overrun, the query was aborted.
+
+*Effect:* The operation fails.
+
+*Recovery:* If there is an external table definition in {project-name} for the Hive table,
+drop and recreate it with accurate limits on VARCHAR column size. If there is not such
+an external table definition, use CQD HIVE_MAX_STRING_LENGTH_IN_BYTES 'nnnn', where
+nnnn is the longest string in the Hive table. Then resubmit the query.
 
 [[SQL-8553]]
 == SQL 8553
@@ -462,6 +497,19 @@ or rollback.
 
 *Recovery:* The application that started the transaction must perform a
 commit or rollback. {project-name} must start any transactions it will later commit or rollback.
+
+<<<
+[[SQL-8691]]                                                                                    
+== SQL 8691
+```
+Field position must be great than zero.
+```
+
+*Cause:* You attempted to use an invalid value for the third operand of the split_part function.
+
+*Effect:* The operation fails.
+
+*Recovery:* Correct the syntax and resubmit.
 
 <<<
 [[SQL-8808]]
@@ -914,6 +962,35 @@ The SQL compiler failed to initialize properly. Query results may differ from wh
 
 *Recovery:* Stop the {project-name}  and restart it.
 
+[[SQL-8892]]
+== SQL 8892
+
+```
+The statement argument count exceeds the descriptor entry count.
+```
+
+*Cause:* The output descriptor used by sqlci or mxosrvr on a CALL statement is insufficiently wide.
+
+*Effect:* The operation fails.
+
+*Recovery:* Re-prepare and re-execute the statement.
+
+<<<
+[[SQL-8893]]
+== SQL 8893
+
+```
+The statement argument count does not match the descriptor entry count.
+```
+
+*Cause:* The output descriptor used by sqlci or mxosrvr on a non-CALL statement has a different size than the statement output. This has been
+observed, for example, when SELECTing from a Hive table, where an ALTER TABLE ADD COLUMN command has been done in the Hive shell between
+the time the {project-name} SELECT was prepared and when it was executed, or when a cached query plan has been used.
+
+*Effect:* The operation fails.
+
+*Recovery:* Re-execute the statement.
+
 [[SQL-8901]]
 == SQL 8901
 
@@ -927,6 +1004,8 @@ attempt was made to contact a nonexistent {project-name} UDR server.
 *Effect:* The operation fails.
 
 *Recovery:* Retry the {project-name} statement.
+
+
 
 <<<
 [[SQL-8904]]

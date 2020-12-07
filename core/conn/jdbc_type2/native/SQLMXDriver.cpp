@@ -75,18 +75,13 @@ JNIEXPORT jint JNICALL Java_org_apache_trafodion_jdbc_t2_T2Driver_getPid (JNIEnv
 * Method:    SQLMXInitialize
 * Signature: (Ljava/lang/String;I)V
 */
-// MFC - added two parameters to set the MFC on/off and the directory
 JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_T2Driver_SQLMXInitialize(JNIEnv *jenv, jclass cls,
-																		 jstring language, jint nowaitOn, jstring moduleCaching, jstring compiledModuleLocation)
+																		 jstring language)
 {
-	FUNCTION_ENTRY("Java_org_apache_trafodion_jdbc_t2_T2Driver_SQLMXInitialize",("language=%s, nowaitOn=%ld",
-		DebugJString(jenv,language),
-		nowaitOn));
+	FUNCTION_ENTRY("Java_org_apache_trafodion_jdbc_t2_T2Driver_SQLMXInitialize",("language=%s,
+		DebugJString(jenv,language)));
 	const char 					*nLanguage;
 	//	static GlobalInformation	*globalInfo = new GlobalInformation();
-	//MFC
-	const char					*nModuleCaching;
-	const char					*nCompiledModuleLocation;
         
 	if (!driverVersionChecked)
 	{
@@ -109,128 +104,9 @@ JNIEXPORT void JNICALL Java_org_apache_trafodion_jdbc_t2_T2Driver_SQLMXInitializ
 	if (! cacheJNIObjects(jenv))
 		FUNCTION_RETURN_VOID(("cacheJNIObjects() failed"));
 
-#ifdef NSK_PLATFORM		// Linux port
-	if (language)
-	{
-		nLanguage = JNI_GetStringUTFChars(jenv,language, NULL);
-		if (strcmp(nLanguage, "ja") == 0)
-		{
-			srvrGlobal->clientLCID = MAKELCID(MAKELANGID(LANG_JAPANESE, SUBLANG_DEFAULT), SORT_DEFAULT);
-			srvrGlobal->clientErrorLCID = srvrGlobal->clientLCID;
-		}
-		else
-			if (strcmp(nLanguage, "en") == 0)
-			{
-				srvrGlobal->clientLCID = MAKELCID(MAKELANGID(LANG_ENGLISH, SUBLANG_DEFAULT), SORT_DEFAULT);
-				srvrGlobal->clientErrorLCID = srvrGlobal->clientLCID;
-			}
-			else
-			{
-				srvrGlobal->clientLCID = LANG_NEUTRAL;
-				srvrGlobal->clientErrorLCID = LANG_NEUTRAL;
-			}
-			JNI_ReleaseStringUTFChars(jenv,language, nLanguage);
-	}
-	else
-	{
-		srvrGlobal->clientLCID = LANG_NEUTRAL;
-		srvrGlobal->clientErrorLCID = LANG_NEUTRAL;
-	}
-#endif
-
 	srvrGlobal->dialogueId = 0;			// DialogueId is set to zero now
 
-	// Linux port - Nowait support is set to OFF for now.
-	// nowaitOn = 0;	// Should come command line or JDBC properties
-	
-	switch (nowaitOn)
-	{
-	case 0:
-		srvrGlobal->nowaitOn = 0;
-		break;
-	case 1:
-		srvrGlobal->nowaitOn = 1;
-		break;
-	case 2:
-		srvrGlobal->nowaitOn = 2;
-		break;
-	default:
-		srvrGlobal->nowaitOn = 0;
-		break;
-	}
-
-#ifdef NSK_PLATFORM		// Linux port
-	// setup MP system catalog name
-	if (envGetSystemCatalogName (&srvrGlobal->NskSystemCatalogName[0]) != TRUE)
-	{
-		throwSQLException(jenv, SYSTEM_CATALOG_ERROR, NULL, "HY000", 0);
-		FUNCTION_RETURN_VOID(("envGetSystemCatalogName() failed"));
-	}
-
-	// setup MX system catalog name
-	if (envGetMXSystemCatalogName (&srvrGlobal->SystemCatalog[0]) != TRUE)
-	{
-		throwSQLException(jenv, SYSTEM_CATALOG_ERROR, NULL, "HY000", 0);
-		FUNCTION_RETURN_VOID(("envGetMXSystemCatalogName() failed"));
-	}
-#endif
-
-	// MFC - set the srvrGlobal variables w.r.t the properties - start
-
-	srvrGlobal->moduleCaching=0;
-	if (moduleCaching)
-	{
-		nModuleCaching = JNI_GetStringUTFChars(jenv,moduleCaching, NULL);
-		if (strcmp(nModuleCaching,"ON") == 0)
-			srvrGlobal->moduleCaching=1;
-
-		//Soln. No.: 10-110927-9875 - fix memory leak
-		JNI_ReleaseStringUTFChars(jenv,moduleCaching, nModuleCaching);
-	}
-
-
-	if (srvrGlobal->moduleCaching == 1)
-	{
-		memset(srvrGlobal->CurrentCatalog, '\0', 129);
-		memset(srvrGlobal->CurrentSchema, '\0', 129);
-		memset(srvrGlobal->compiledModuleLocation, '\0', 100);
-		if (compiledModuleLocation == NULL)
-		{
-			strcpy(srvrGlobal->compiledModuleLocation,"/usr/tandem/sqlmx/USERMODULES");
-		}
-		else
-		{
-			nCompiledModuleLocation = JNI_GetStringUTFChars(jenv,compiledModuleLocation, NULL);
-			strcpy(srvrGlobal->compiledModuleLocation,nCompiledModuleLocation);
-
-			//Soln. No.: 10-110927-9875 - fix memory leak
-			JNI_ReleaseStringUTFChars(jenv,compiledModuleLocation, nCompiledModuleLocation);
-
-			if(srvrGlobal->compiledModuleLocation[0] != '/')
-			{
-				printf("The directory provided for option \"compiledmodulelocation\" must be an absolute path.\n");
-				abort();
-			}
-			int nDirExists = access(srvrGlobal->compiledModuleLocation, F_OK);
-			if(nDirExists != 0)
-			{
-				printf("The directory provided for option \"compiledmodulelocation\" does not exist.\n");
-				abort();
-			}
-			nDirExists = access(srvrGlobal->compiledModuleLocation, W_OK);
-			if(nDirExists != 0)
-			{
-				printf("The directory provided for option \"compiledmodulelocation\" does not have \"write\" permission.\n");
-				abort();
-			}
-			if(srvrGlobal->compiledModuleLocation[strlen(srvrGlobal->compiledModuleLocation)-1] == '/')
-			{
-				srvrGlobal->compiledModuleLocation[strlen(srvrGlobal->compiledModuleLocation)-1] = '\0';
-			}
-		}
-	}
 	srvrGlobal->boolFlgforInitialization = 1;
-	// MFC set the srvrGlobal variables w.r.t the properties - end
 	FUNCTION_RETURN_VOID((NULL));
 }
 

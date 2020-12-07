@@ -139,27 +139,26 @@ char* HBaseClient_JNI::getErrorText(HBC_RetCode errEnum)
 //////////////////////////////////////////////////////////////////////////////
 HBaseClient_JNI* HBaseClient_JNI::getInstance()
 {
-   ContextCli *currContext = GetCliGlobals()->currContext();
-   HBaseClient_JNI *hbaseClient_JNI = currContext->getHBaseClient();
-   if (hbaseClient_JNI == NULL)
-   {
-     NAHeap *heap = currContext->exHeap();
-    
-     hbaseClient_JNI  = new (heap) HBaseClient_JNI(heap);
-     currContext->setHbaseClient(hbaseClient_JNI);
+   CliGlobals *cliGlobals = GetCliGlobals();
+   NAHeap *heap = cliGlobals->getExecutorMemory();
+   HBaseClient_JNI *hbaseClient_JNI;
+     
+   hbaseClient_JNI = cliGlobals->getHBaseClient();
+   if (hbaseClient_JNI == NULL) {
+      hbaseClient_JNI  = new (heap) HBaseClient_JNI(heap);
+      cliGlobals->setHbaseClient(hbaseClient_JNI);
    }
    return hbaseClient_JNI;
 }
 
 void HBaseClient_JNI::deleteInstance()
 {
-   ContextCli *currContext = GetCliGlobals()->currContext();
-   HBaseClient_JNI *hbaseClient_JNI = currContext->getHBaseClient();
+   CliGlobals *cliGlobals = GetCliGlobals();
+   HBaseClient_JNI *hbaseClient_JNI = cliGlobals->getHBaseClient();
    if (hbaseClient_JNI != NULL)
    {
-      NAHeap *heap = currContext->exHeap();
-      NADELETE(hbaseClient_JNI, HBaseClient_JNI, heap);
-      currContext->setHbaseClient(NULL);
+      NADELETE(hbaseClient_JNI, HBaseClient_JNI, cliGlobals->getExecutorMemory());
+      cliGlobals->setHbaseClient(NULL);
    }
 }
 
@@ -539,6 +538,7 @@ HBC_RetCode HBaseClient_JNI::create(const char* fileName, HBASE_NAMELIST& colFam
     jenv_->PopLocalFrame(NULL);
     return HBC_ERROR_CREATE_EXCEPTION;
   }
+
   jenv_->PopLocalFrame(NULL);
   return HBC_OK;
 }
@@ -604,6 +604,7 @@ HBC_RetCode HBaseClient_JNI::create(const char* fileName,
   if (jresult == false) 
   {
     logError(CAT_SQL_HBASE, "HBaseClient_JNI::create()", getLastError());
+    GetCliGlobals()->setJniErrorStr(getLastError());
     jenv_->PopLocalFrame(NULL);
     return HBC_ERROR_CREATE_EXCEPTION;
   }
@@ -1335,7 +1336,7 @@ HBC_RetCode HBaseClient_JNI::getLatestSnapshot(const char * tblName, char *& sna
     return HBC_ERROR_GET_LATEST_SNP_PARAM;
   }
   tsRecentJMFromJNI = JavaMethods_[JM_GET_LATEST_SNP].jm_full_name;
-  jstring jresult = (jstring)jenv_->CallObjectMethod(javaObj_, JavaMethods_[JM_GET_LATEST_SNP].methodID,js_tblName);
+  jstring jresult = (jstring)jenv_->CallStaticObjectMethod(javaClass_, JavaMethods_[JM_GET_LATEST_SNP].methodID,js_tblName);
   if (jenv_->ExceptionCheck())
   {
     getExceptionDetails(__FILE__, __LINE__, "HBaseClient_JNI::getLatestSnapshot()");

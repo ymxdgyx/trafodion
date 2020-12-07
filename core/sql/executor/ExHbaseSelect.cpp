@@ -70,6 +70,11 @@ ExWorkProcRetcode ExHbaseScanTaskTcb::work(short &rc)
 
 	    tcb_->table_.val = tcb_->hbaseAccessTdb().getTableName();
 	    tcb_->table_.len = strlen(tcb_->hbaseAccessTdb().getTableName());
+            // Bypass scan when beginRowId_ is less than endRowId_
+            if (tcb_->compareRowIds() < 0) {
+               step_ = DONE;
+               break;
+            }
 
 	    if (tcb_->setupHbaseFilterPreds())
 	      {
@@ -255,7 +260,11 @@ ExWorkProcRetcode ExHbaseScanRowwiseTaskTcb::work(short &rc)
 	  {
 	    tcb_->table_.val = tcb_->hbaseAccessTdb().getTableName();
 	    tcb_->table_.len = strlen(tcb_->hbaseAccessTdb().getTableName());
-
+            // Bypass scan when beginRowId_ is less than endRowId_
+            if (tcb_->compareRowIds() < 0) {
+               step_ = DONE;
+               break;
+            }
 	    if (tcb_->setupHbaseFilterPreds())
 	      {
 		step_ = HANDLE_ERROR;
@@ -473,7 +482,11 @@ ExWorkProcRetcode ExHbaseScanSQTaskTcb::work(short &rc)
 	  {
 	    tcb_->table_.val = tcb_->hbaseAccessTdb().getTableName();
 	    tcb_->table_.len = strlen(tcb_->hbaseAccessTdb().getTableName());
-
+            // Bypass scan when beginRowId_ is less than endRowId_
+            if (tcb_->compareRowIds() < 0) {
+               step_ = DONE;
+               break;
+            }
 	    if (tcb_->setupHbaseFilterPreds())
 	      {
 		step_ = HANDLE_ERROR;
@@ -599,7 +612,6 @@ ExWorkProcRetcode ExHbaseScanSQTaskTcb::work(short &rc)
 	    if (tcb_->moveRowToUpQueue(tcb_->convertRow_, tcb_->convertRowLen_, 
 				       &rc, FALSE))
 	      return 1;
-	    
 	    if (tcb_->getHbaseAccessStats())
 	      tcb_->getHbaseAccessStats()->incUsedRows();
 	    
@@ -613,6 +625,7 @@ ExWorkProcRetcode ExHbaseScanSQTaskTcb::work(short &rc)
             if (tcb_->hbaseAccessTdb().multiVersions())
               step_ = CREATE_ROW;
             else
+              
               step_ = NEXT_ROW;
 	  }
 	  break;

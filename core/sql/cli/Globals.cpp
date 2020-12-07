@@ -68,6 +68,7 @@
 
 #include "ExCextdecs.h"
 CliGlobals * cli_globals = NULL;
+__thread ContextTidMap *tsCurrentContextMap = NULL;
 
 CLISemaphore globalSemaphore ;
 
@@ -85,10 +86,8 @@ CliGlobals::CliGlobals(NABoolean espProcess)
        totalCliCalls_(0),
        savedCompilerVersion_ (COM_VERS_COMPILER_VERSION),
        globalSbbCount_(0),
-       priorityChanged_(FALSE),
        currRootTcb_(NULL),
        processStats_(NULL),
-       savedPriority_(148), // Set it to some valid priority to start with
        tidList_(NULL),
        cliSemaphore_(NULL),
        defaultContext_(NULL),
@@ -96,6 +95,7 @@ CliGlobals::CliGlobals(NABoolean espProcess)
        langManJava_(NULL)
        , myVerifier_(-1)
        , espProcess_(espProcess)
+       , hbaseClientJNI_(NULL)
 {
   globalsAreInitialized_ = FALSE;
   executorMemory_.setThreadSafe();
@@ -154,8 +154,6 @@ void CliGlobals::init( NABoolean espProcess,
     ex_assert(0,errStr);
   }
 
-  ComRtGetProcessPriority(myPriority_);
-  savedPriority_ = (short)myPriority_;
   myNumCpus_ = ComRtGetCPUArray(cpuArray_, (NAHeap *)&executorMemory_);
 
   // create global structures for IPC environment
@@ -177,10 +175,17 @@ void CliGlobals::init( NABoolean espProcess,
     cli_globals = this;
     int error;
     statsGlobals_ = (StatsGlobals *)shareStatsSegment(shmId_);
-    if (statsGlobals_ == NULL
-      || (statsGlobals_ != NULL && 
-        statsGlobals_->getVersion() != StatsGlobals::CURRENT_SHARED_OBJECTS_VERSION_))
+    NABoolean reportError = FALSE;
+    char msg[256];;
+    if ((statsGlobals_ == NULL)
+      || ((statsGlobals_ != NULL) && (statsGlobals_->getInitError(myPin_, reportError))))
     {
+      if (reportError) {
+         snprintf(msg, sizeof(msg),
+          "Version mismatch or Pid %d,%d is higher than the configured pid max %d",
+           myCpu_, myPin_, statsGlobals_->getConfiguredPidMax());
+         SQLMXLoggingArea::logExecRtInfo(__FILE__, __LINE__, msg, 0);
+      }
       statsGlobals_ = NULL;
       statsHeap_ = new (getExecutorMemory()) 
         NAHeap("Process Stats Heap", getExecutorMemory(),
@@ -199,6 +204,7 @@ void CliGlobals::init( NABoolean espProcess,
       }
       else
       {
+        bool reincarnated;
         error = statsGlobals_->getStatsSemaphore(semId_, myPin_);
 
         statsHeap_ = (NAHeap *)statsGlobals_->
@@ -214,10 +220,12 @@ void CliGlobals::init( NABoolean espProcess,
 	  NAHeap("Process Stats Heap", statsGlobals_->getStatsHeap(),
 		 8192,
 		 0);
-	statsGlobals_->addProcess(myPin_, statsHeap_);
+	reincarnated = statsGlobals_->addProcess(myPin_, statsHeap_);
         processStats_ = statsGlobals_->getExProcessStats(myPin_);
         processStats_->setStartTime(myStartTime_);
 	statsGlobals_->releaseStatsSemaphore(semId_, myPin_);
+        if (reincarnated)
+           statsGlobals_->logProcessDeath(myCpu_, myPin_, "Process reincarnated before RIP");
       }
     }
     // create a default context and make it the current context
@@ -291,6 +299,7 @@ CliGlobals::~CliGlobals()
     error = statsGlobals_->getStatsSemaphore(semId_, myPin_);
     statsGlobals_->removeProcess(myPin_);
     statsGlobals_->releaseStatsSemaphore(semId_, myPin_);
+    statsGlobals_->logProcessDeath(myCpu_, myPin_, "Normal process death");
     sem_close((sem_t *)semId_);
   }
 }
@@ -302,17 +311,6 @@ Lng32 CliGlobals::getNextUniqueContextHandle()
     contextHandle = nextUniqueContextHandle++;
     cliSemaphore_->release();
     return contextHandle;
-}
-
-IpcPriority CliGlobals::myCurrentPriority()
-{
-  IpcPriority myPriority;
-  
-  Lng32 retcode = ComRtGetProcessPriority(myPriority);
-  if (retcode)
-    return -2;
-
-  return myPriority;
 }
 
 
@@ -451,6 +449,7 @@ CliGlobals * CliGlobals::createCliGlobals(NABoolean espProcess)
   result =  new CliGlobals(espProcess);
   //pthread_key_create(&thread_key, SQ_CleanupThread);
   cli_globals = result;
+  HBaseClient_JNI::getInstance();
   return result;
 }
 
@@ -483,13 +482,9 @@ ContextCli *CliGlobals::currContext()
 {
   if (tsCurrentContextMap == NULL ||
                tsCurrentContextMap->context_ == NULL)
-  {
-    tsCurrentContextMap = getThreadContext(syscall(SYS_gettid));
-    //pthread_setspecific(thread_key, tsCurrentContextMap);
-    if (tsCurrentContextMap == NULL)
-       return defaultContext_; 
-  }
-  return tsCurrentContextMap->context_; 
+     return defaultContext_; 
+  else 
+     return tsCurrentContextMap->context_; 
 }
 
 
@@ -609,6 +604,9 @@ Lng32 CliGlobals::switchContext(ContextCli * newContext)
         tsCurrentContextMap != NULL && 
            newContext == tsCurrentContextMap->context_)
      return 0;
+  if (newContext == defaultContext_)
+    if (tsCurrentContextMap)
+      tsCurrentContextMap->context_ = NULL;
   retcode = currContext()->getTransaction()->suspendTransaction();
   if (retcode != 0)
      return retcode;

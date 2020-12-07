@@ -37,7 +37,7 @@
 1035 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Catalog $0~CatalogName already exists.
 1036 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Authorization ID $0~String0 cannot grant to authorization ID $1~String1 because it could create a circular dependency.
 1037 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Revoke failed because of a dependent grant between authorization ID $0~string0 and authorization ID $1~string1.
-1038 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
+1038 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Unable to upgrade library management
 1039 ZZZZZ 99999 BEGINNER MAJOR DBADMIN No privileges were revoked. You lack the grant option for the specified privilege(s).
 1040 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The use of ALTER on metadata tables is not permitted.
 1041 ZZZZZ 99999 BEGINNER MINOR DBADMIN The primary key has already been defined.
@@ -85,7 +85,7 @@
 1083 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Validation for constraint $0~ConstraintName failed; incompatible data exists in table.
 1084 ZZZZZ 99999 BEGINNER MINOR DBADMIN An invalid default value was specified for column $0~ColumnName.
 1085 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
-1086 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU --- unused ---
+1086 ZZZZZ 99999 BEGINNER MAJOR DBADMIN $0~string0 is not a $1~string1.
 1087 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
 1088 ZZZZZ 99999 BEGINNER MINOR DBADMIN --- unused ---
 1089 ZZZZZ 99999 BEGINNER MINOR DBADMIN The system generated column SYSKEY must be specified last or not specified at all in the index column list.
@@ -213,7 +213,7 @@
 1211 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU The column values of the SPLIT BY first key in position $0~Int0 (one-based) are not greater (for ascending columns) or less (for descending columns) than its predecessor.
 1212 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU An HBase region start key provided only part of the value for Trafodion key column $0~Int0. This could in some unusual situations cause errors.
 1213 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU Unable to create or initialize a connection to Apache Hive.
-1214 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU Error $0~String0 encountered when executing HiveQL statement $1~String1.
+1214 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU Error encountered when executing HiveQL statement "$1~String1". Details: $0~String0
 1215 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU An error occurred while determining host, port, or file name for HDFS URI $0~string0. Cause: $1~string1.
 1220 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Code must contain two non-blank characters.
 1221 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Only system components may contain system operations.
@@ -334,7 +334,7 @@
 1336 ZZZZZ 99999 ADVANCED MAJOR DBADMIN INITIALIZE SQL must specify a $0~String0 statement for the $1~String1.  INITIALIZE SQL fails.
 1337 ZZZZZ 99999 BEGINNER MINOR DBADMIN $0~String0 is a reserved authorization identifier.
 1338 ZZZZZ 99999 ADVANCED MAJOR DBADMIN Role $0~string0 is not defined in the database.
-1339 ZZZZZ 99999 BEGINNER MINOR DBADMIN $0~string0 is not a grantable role.
+1339 ZZZZZ 99999 BEGINNER MINOR DBADMIN $0~string0 is not a role.
 1340 ZZZZZ 99999 BEGINNER MINOR DBADMIN $0~string0 is not a user.
 1341 ZZZZZ 99999 BEGINNER MINOR DBADMIN --- unused ---
 1342 ZZZZZ 99999 BEGINNER MINOR DBADMIN --- unused ---
@@ -382,8 +382,8 @@
 1384 ZZZZZ 99999 BEGINNER MINOR DBADMIN --- unused ---
 1385 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
 1386 ZZZZZ 99999 BEGINNER MINOR DBADMIN	--- unused ---
-1387 ZZZZZ 99999 BEGINNER MINOR DBADMIN --- unused ---
-1388 ZZZZZ 99999 BEGINNER MINOR DBADMIN Object $0~TableName does not exist in hive metadata.
+1387 ZZZZZ 99999 BEGINNER MINOR DBADMIN $0~String0 $1~String1 already exists in Hive Metadata.
+1388 ZZZZZ 99999 BEGINNER MINOR DBADMIN $0~String0 $1~String1 does not exist in Hive Metadata.
 1389 ZZZZZ 99999 BEGINNER MINOR DBADMIN Object $0~String0 does not exist in Trafodion.
 1390 ZZZZZ 99999 BEGINNER MINOR DBADMIN Object $0~String0 already exists in Trafodion.
 1391 ZZZZZ 99999 BEGINNER MINOR DBADMIN $0~String0 is a $1~String1 object and cannot be updated.
@@ -528,7 +528,7 @@
 2009 40000 99999 ADVANCED MAJOR DBADMIN The user transaction must be rolled back (or committed, if that makes sense in the application) before Compiler can be restarted and proceed.
 2010 ZZZZZ 99999 ADVANCED MAJOR DBADMIN Internal IPC error.
 2011 ZZZZZ 99999 ADVANCED MAJOR DBADMIN Server process could not be created - Operating system error $0~int0 while resolving program file name $1~string0.
-2012 ZZZZZ 99999 ADVANCED MAJOR DBADMIN Server process $0~string0 could not be created on $1~string1 - Operating system error $2~int0, TPCError = $3~int1, error detail = $4~int2.  (See variants of Seabed procedure msg_mon_start_process for details).
+2012 ZZZZZ 99999 ADVANCED MAJOR DBADMIN Server process $0~string0 could not be created on $1~string1 - Operating system error $2~int0, TPCError = $3~int1, error detail = $4~int2. $2~string2
 2013 ZZZZZ 99999 ADVANCED MAJOR DBADMIN Server process $0~string0 could not be created on $1~string1 - Operating system error $2~int0.
 2014 ZZZZZ 99999 ADVANCED MAJOR DBADMIN Server process $0~string0 could not be created on $1~string1 - Operating system error $2~int0 on swap file.
 2015 ZZZZZ 99999 ADVANCED CRTCL DIALOUT Server process $0~string0 could not be created on $1~string1 - CPU is unavailable (Operating system error $2~int0).
@@ -670,6 +670,7 @@
 2242 ZZZZZ 99999 BEGINNER MINOR LOGONLY Compiler process unable to log its status and health information to the repository.
 2243 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Using DISPLAY in trafci or DBMgr is not supported.
 2244 ZZZZZ 99999 BEGINNER MAJOR DBADMIN ULOG file path invalid : $0~string0.
+2245 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Error loading libSqlCompilerDebugger.so DLL for the display GUI: $0~string0.
 2900 ZZZZZ 99999 BEGINNER MAJOR DBADMIN in file $0~string0 at line $1~int0:
 2980 ZZZZZ 99999 BEGINNER MAJOR DBADMIN ? Option -g requires an argument.
 2981 ZZZZZ 99999 BEGINNER MAJOR DBADMIN ? Unrecognized argument in option -g
@@ -887,7 +888,7 @@ $1~String1 --------------------------------
 3131 0A000 99999 BEGINNER MAJOR DBADMIN The statement just entered is currently not supported.
 3132 42000 99999 BEGINNER MAJOR DBADMIN The HEADING for column $0~ColumnName exceeds the maximum size of 128 characters.
 3133 42000 99999 BEGINNER MAJOR DBADMIN PERFORM is valid only in COBOL programs.
-3134 42000 99999 BEGINNER MAJOR DBADMIN The specified TIME or TIMESTAMP precision value, $0~int0, cannot exceed 6.
+3134 42000 99999 BEGINNER MAJOR DBADMIN The specified TIME or TIMESTAMP precision value, $0~int0, cannot exceed 9.
 3135 42000 99999 BEGINNER MAJOR DBADMIN The precision of float, $0~int0, cannot exceed 54.
 3136 42000 99999 BEGINNER MAJOR DBADMIN Only LEFT, RIGHT, and FULL OUTER JOIN are valid in {oj ...}
 3137 0A000 99999 BEGINNER MAJOR DBADMIN UNION JOIN is not yet supported.
@@ -1122,7 +1123,7 @@ $1~String1 --------------------------------
 4051 42000 99999 BEGINNER MAJOR DBADMIN The first operand of function $0~string0 must be character.
 4052 42000 99999 BEGINNER MAJOR DBADMIN The second operand of function $0~string0 must be numeric.
 4053 42000 99999 BEGINNER MAJOR DBADMIN The third operand of function $0~string0 must be numeric.
-4054 ZZZZZ 99999 ADVANCED CRTCL DIALOUT The MAINTAIN control information table contains an incorrect format.
+4054 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The second operand of function $0~string0 may not be larger than $1~Int0.
 4055 42000 99999 BEGINNER MAJOR DBADMIN The select lists or tuples must have comparable data types.  $0~String0 and $1~String1 are not comparable.
 4056 42000 99999 BEGINNER MAJOR DBADMIN Exposed name $0~TableName appears more than once.
 4057 42000 99999 BEGINNER MAJOR DBADMIN Correlation name $0~String0 conflicts with qualified identifier of table $1~TableName.
@@ -1152,7 +1153,7 @@ $1~String1 --------------------------------
 4081 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU --- unused as of 5/7/12 ---
 4082 42000 99999 BEGINNER MAJOR DBADMIN Object $0~TableName does not exist or is inaccessible.
 4083 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU --- unused as of 5/7/12 ---
-4084 42000 99999 ADVANCED MAJOR DBADMIN SQL object $0~TableName is corrupt.
+4084 42000 99999 ADVANCED MAJOR DBADMIN --- unused ---
 4085 0A000 99999 BEGINNER MAJOR DBADMIN File organization $0~String0 of object $1~TableName is not supported.
 4086 42000 99999 BEGINNER MAJOR DBADMIN Environment variable or define $0~String0 does not exist.
 4087 42000 99999 BEGINNER MAJOR DBADMIN Prototype value '$0~String0' is not a valid qualified name.
@@ -1188,7 +1189,7 @@ $1~String1 --------------------------------
 4117 42000 99999 BEGINNER MAJOR DBADMIN The cursor query expression might be nonupdatable.
 4118 42000 99999 BEGINNER MAJOR DBADMIN The cursor query expression is not updatable.
 4119 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The requested number of parallel extract streams must be greater than one and cannot exceed the number of maximally configured ESPs, $0~Int0.
-4120 42000 99999 BEGINNER MAJOR DBADMIN In a query with a GROUP BY, DISTINCT, or aggregate function, each column in the ORDER BY clause must be one of the columns explicitly SELECTed by the query.  Column in error: $0~ColumnName.
+4120 42000 99999 BEGINNER MAJOR DBADMIN In a query with a GROUP BY, DISTINCT, or aggregate function, each column in the ORDER BY clause must be one of the columns explicitly SELECTed by the query. Column in error: $0~ColumnName.
 4121 42000 99999 BEGINNER MAJOR DBADMIN In a query with a GROUP BY, DISTINCT, or aggregate function, each column in the ORDER BY clause must be one of the columns explicitly SELECTed by the query.  Column in error: $0~ColumnName.  Table in scope: $1~String0.
 4122 42000 99999 BEGINNER MAJOR DBADMIN NULL cannot be assigned to NOT NULL column $0~ColumnName.
 4123 42000 99999 BEGINNER MAJOR DBADMIN NULL cannot be cast to a NOT NULL data type.
@@ -1201,15 +1202,15 @@ $1~String1 --------------------------------
 4130 ZZZZZ 99999 BEGINNER MAJOR DBADMIN $0~string0 is a read-only DEFAULTS attribute and cannot be updated.
 4131 42000 99999 BEGINNER MAJOR DBADMIN Current_time, current_date, or current_timestamp is not allowed in a check constraint.
 4132 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Current_user, session_user, or system_user is not allowed in a check constraint.
-4133 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Both trim character and source have to be CHARACTER typed.
+4133 ZZZZZ 99999 BEGINNER MAJOR DBADMIN For the TRIM function, the trim character and source must be of CHARACTER type.
 4134 42000 99999 BEGINNER MAJOR DBADMIN The operation ($0~String0) is not allowed.  Try UNION ALL instead.
 4135 42000 99999 BEGINNER MAJOR DBADMIN In an INSERT-SELECT, each column in the ORDER BY clause must be one of the columns in the select list of the query.  Column in error: $0~ColumnName.
 4136 ZZZZZ 99999 BEGINNER MAJOR DBADMIN An outer SELECT was used in a DELETE [FIRST N] statement without using the [LAST 1] clause.
-4137 ZZZZZ 99999 BEGINNER MAJOR DBADMIN A DELETE [FIRST N] statement was specified on table $0~TableName which has more than one partition, without using the PARTITION clause. 
+4137 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
 4138 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Use of a subquery in the WHERE clause of a DELETE [FIRST N] statement is not supported.
 4139 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Use of a subquery in the WHERE clause of a Long Running Update statement is not supported.
 4140 42000 99999 BEGINNER MAJOR DBADMIN The second operand of function $0~string0 must be of interger type.
-4141 42000 99999 BEGINNER MAJOR DBADMIN The default value operand of function $0~string0 must be of the same type as the 1st operand.
+4141 42000 99999 BEGINNER MAJOR DBADMIN The default value operand of function $0~string0 must be of the same type as the first operand.
 4150 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Primary key of table expression $0~string0 must be used for join with embedded $0~string1 expression.  Tables in scope: $2~string2.
 4151 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Stream access is supported only on updatable views. View: $0~TableName.
 4152 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Table $0~TableName cannot be both read and updated.
@@ -1242,7 +1243,7 @@ $1~String1 --------------------------------
 4179 0A000 99999 BEGINNER MAJOR DBADMIN SEQUENCE BY is not supported for stream expressions.
 4180 0A000 99999 BEGINNER MAJOR DBADMIN Stream expression is not supported for top level DELETE statement. 
 4181 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused as of 03/17/04 ---
-4182 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused as of 03/17/04 ---
+4182 42000 99999 BEGINNER MAJOR DBADMIN Function $0~String0 operand $0~Int0 must be of type $1~String1.
 4183 0A000 99999 BEGINNER MAJOR DBADMIN Embedded DELETE statements are not allowed on referenced tables.
 4184 0A000 99999 BEGINNER MAJOR DBADMIN Columns that are part of a referential constraint cannot be updated using embedded UPDATE statements. 
 4185 42000 99999 BEGINNER MAJOR DBADMIN Select list index is not allowed to be specified in the GROUP BY clause for this query.
@@ -1254,7 +1255,7 @@ $1~String1 --------------------------------
 4191 42000 99999 BEGINNER MAJOR DBADMIN Schema name $0~string0 specified as part of the volatile table or index must be the same as the current user name, $1~string1.
 4192 42000 99999 BEGINNER MAJOR DBADMIN An invalid volatile object name was specified.
 4193 42000 99999 BEGINNER MAJOR DBADMIN The schema name prefix $0~string0 is reserved and cannot be used.
-4194 42000 99999 BEGINNER MAJOR DBADMIN Table $0~TableName is a volatile table and not allowed within this sql statement.
+4194 42000 99999 BEGINNER MAJOR DBADMIN --- unused ---
 4195 42000 99999 BEGINNER MAJOR DBADMIN The name, $0~string0, specified in the GROUP BY or HAVING clause is ambiguous.
 4196 42000 99999 BEGINNER MAJOR DBADMIN A HAVING clause that uses a renamed column cannot contain an aggregate or a subquery.
 4197 42000 99999 BEGINNER MAJOR DBADMIN This expression cannot be used in the $0~string0 clause.
@@ -1292,14 +1293,14 @@ $1~String1 --------------------------------
 4242 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The value $0~string0 is not supported at this place in the DIVISION BY clause, only key columns are allowed.
 4243 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The DIVISION BY clause only supports very limited types of expressions. Expression $0~string0 is not supported.
 4244 ZZZZZ 99999 BEGINNER MAJOR DBADMIN When using the DATE_PART function in DIVISION BY, only leading parts of the date, including the year, can be extracted.
-4245 42000 99999 BEGINNER MAJOR DBADMIN Table $0~TableName is defined as INSERT_ONLY.  You cannot delete rows or update the contents of this table.
+4245 42000 99999 BEGINNER MAJOR DBADMIN --- unused ---
 4246 ZZZZZ 99999 BEGINNER MINOR DBADMIN All column values must be specified when loading data by UPSERT USING LOAD syntax.
 4247 0A000 99999 BEGINNER MAJOR DBADMIN Specified size in bytes ($0~Int0) exceeds the maximum size allowed ($1~Int1) for column $0~ColumnName.
 4248 ZZZZZ 99999 BEGINNER MINOR DBADMIN Index $0~string1 cannot be divisioned like a table since table $0~string0 is not divisioned.
 4249 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Only non-negative constant offset value is supported in the $0~string0  function.
 4250 ZZZZZ 99999 BEGINNER MINOR DBADMIN Object name could not be retrieved from metadata based on the provided uid. The underlying hbase object will not be removed.
 4251 ZZZZZ 99999 BEGINNER MINOR DBADMIN Object UID could not be retrieved from metadata based on the provided object name. Metadata cleanup will not be performed but the underlying hbase object will be removed, if it exists.
-4252 ZZZZZ 99999 BEGINNER MINOR DBADMIN This metadata cleanup option is not yet supported.
+4252 ZZZZZ 99999 BEGINNER MINOR DBADMIN --- unused ---
 4253 ZZZZZ 99999 BEGINNER MINOR DBADMIN The provided object uid does not match the object uid in metadata for this table. Check the input values and rerun the query or provide only one of the input values.
 4254 ZZZZZ 99999 BEGINNER MINOR DBADMIN Object $0~String0 has invalid state and cannot be accessed. Use cleanup command to drop it.
 4255 ZZZZZ 99999 BEGINNER MINOR DBADMIN Provided schema name does not exist in metadata. Cleanup will be performed on objects in this schema, if they exist.
@@ -1309,8 +1310,8 @@ $1~String1 --------------------------------
 4259 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Primary Key clause must be specified for an HBase mapped table.
 4260 ZZZZZ 99999 BEGINNER MAJOR DBADMIN HBase table($0~String0) to be mapped as an external table does not exist.
 4261 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The schema name $0~SchemaName is reserved for HBase mapped tables and cannot be explicitly specified.
-4262 ZZZZZ 99999 BEGINNER MINOR DBADMIN Object $0~String0 has invalid state and cannot be accessed. It has an external table but the correponding hive table does not exist. Use 'cleanup hive table' command to cleanup this table.
-4263 ZZZZZ 99999 BEGINNER MINOR DBADMIN Object $0~String0 has invalid state and cannot be accessed. It is registered in trafodion metadata but the correponding hive object does not exist. Use 'cleanup hive table/view' command to cleanup this object.
+4262 ZZZZZ 99999 BEGINNER MINOR DBADMIN Object $0~String0 has invalid state and cannot be accessed. It has an external table but the correponding hive table does not exist. Use 'cleanup table' command to cleanup this table.
+4263 ZZZZZ 99999 BEGINNER MINOR DBADMIN Object $0~String0 has invalid state and cannot be accessed. It is registered in trafodion metadata but the correponding hive object does not exist. Use 'cleanup table/view' command to cleanup this object.
 4300 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Use of procedure $0~TableName was not valid - a UDR was invoked within a trigger.
 4301 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Use of routine $0~TableName was not valid - return of result sets is not allowed within a trigger.
 4302 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Procedure $0~TableName expects $1~Int0 parameters but was called with $1~int1 parameters.
@@ -1323,19 +1324,19 @@ $1~String1 --------------------------------
 4309 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Procedure $0~TableName is registered to return result sets and stored procedure result sets are not yet supported.
 4310 0A000 99999 BEGINNER MAJOR DBADMIN $0~string0 is currently supported only in the outermost SELECT list. For example, it cannot be a part of the subquery. 
 4311 0A000 99999 BEGINNER MAJOR DBADMIN This query has an incorrect use of $0~string0. It can only be specified in the outermost select list or in the outermost selection predicate with a '<' or '<=' clause. It also cannot be part of a GROUP BY or ORDER BY operation if used in select list.
-4312 ZZZZZ 99999 BEGINNER MAJOR DBADMIN $0~TableName is an MXCS metadata table and cannot be directly updated.
+4312 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
 4313 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Function rand() is not supported.
-4314 ZZZZZ 99999 BEGINNER MAJOR DBADMIN An error was detected while creating an audit row image for $0~TableName. AUDIT_IMAGE function is only supported on index tables.
-4315 ZZZZZ 99999 BEGINNER MAJOR DBADMIN An error was detected while creating an audit row image. The columns defined for the index $0~TableName do not match what was requested for the audit row image.
-4316 ZZZZZ 99999 BEGINNER MAJOR DBADMIN An error was detected while creating an audit row image. The data type defined for the index $0~TableName and $0~ColumnName do not match what was requested for the audit row image.
+4314 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
+4315 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
+4316 ZZZZZ 99999 BEGINNER MAJOR DBADMIN An error was detected while extracting a udr routine library to local cache : $0~string0 .
 4320 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Stream access is not allowed on multi-partitioned table or index, when flag ATTEMPT_ASYNCHRONOUS_ACCESS is set to OFF. Object in scope: $0~TableName.
 4321 ZZZZZ 99999 BEGINNER MAJOR DBADMIN An embedded update/delete is not allowed on a partitioned table, when flag ATTEMPT_ASYNCHRONOUS_ACCESS is set to OFF. Object in scope: $0~TableName.
 4322 0A000 99999 BEGINNER MAJOR DBADMIN A column with BLOB datatype cannot be used in this clause or function.
 4323 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Use of predefined UDF $0~String0 is deprecated and this function will be removed in a future release. Please use the function with the same name in schema TRAFODION."_LIBMGR_" instead. You may need to issue this command first: INITIALIZE TRAFODION, UPGRADE LIBRARY MANAGEMENT.
-4330 ZZZZZ 99999 BEGINNER MAJOR DBADMIN An invalid audit compression option $0~Int0 was used in the call to INTERPRET_AS_ROW.
+4330 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
 4331 ZZZZZ 99999 BEGINNER MAJOR DBADMIN KEY_RANGE_COMPARISON of partitioning keys on hash partitioned table $1~TableName is not allowed.
 4332 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Table $1~TableName not exposed. Tables in scope: $2~string0.
-4333 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Column $0~ColumnName is not part of the partitioning key.
+4333 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
 4334 ZZZZZ 99999 BEGINNER MAJOR DBADMIN KEY_RANGE_COMPARE is not allowed on views. 
 4335 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The degree $0~Int0 specified for the left operand of the PARTITIONING KEY clause does not match the number of columns $1~Int1 in the partitioning key for table $0~TableName.
 4336 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Embedded $0~string1 statements are not allowed in a join operation. Tables in scope: $0~string0.
@@ -1345,7 +1346,7 @@ $1~String1 --------------------------------
 4340 ZZZZZ 99999 BEGINNER MAJOR	DBADMIN All Window Functions within a query must have the same window partition clause and window order clause.
 4341 ZZZZZ 99999 BEGINNER MAJOR DBADMIN For Window Functions, the set qualifier must be ALL.  DISTINCT is not supported for Window Functions.
 4342 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The specified window frame clause is not valid.
-4343 ZZZZZ 99999 BEGINNER MAJOR DBADMIN A Window Frame Clause cannot contain a FOLLOWING term, either explicitly or implicitly.
+4343 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
 4344 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Use of RANK or DENSE_RANK window functions without a window ORDER BY clause is not supported.
 4345 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Window and Sequence functions cannot be used together.
 4346 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Window functions can be placed only in the select list.
@@ -1373,47 +1374,47 @@ $1~String1 --------------------------------
 4374 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Invalid escape sequence specified as BULK UNLOAD field delimiter or record separator. Only the following escape sequences are allowed: \\a, \\b, \\f, \\n, \\r, \\t, or \\v.
 4375 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Window or Sequence function $0~String0 nested within an aggregate function in the same scope is not supported. 
 4376 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The $0~String0 option was used more than once in an UNLOAD statement.
-4377 ZZZZZ 99999 BEGINNER MAJOR DBADMIN SELECT query specified in the UNLOAD statement is not supported.
+4377 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
 4378 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Target location name specified for UNLOAD is invalid. $0~String0.
 4379 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Invalid BULK UNLOAD field delimiter or record separator. A valid field delimiter or record separator must be a single character or an integer between 1 and 255.
 4380 0A000 99999 BEGINNER MAJOR DBADMIN $0~String0 collation is not supported with sequence functions when collated character expressions are used with SEQUENCE BY, RUNNING/MOVING MIN/MAX, or ROWS SINCE CHANGED.
 4381 42000 99999 BEGINNER MINOR LOGONLY Holdable cursor attribute is incompatible for the isolation level.
 4382 42000 99999 BEGINNER MINOR LOGONLY Holdable cursor attribute cannot be set for a CALL statement.
-4383 ZZZZZ 99999 BEGINNER MINOR DBADMIN A float value cannot be inserted into a numeric data type column $0~ColumnName, if the column is part of the partitioning key.
+4383 ZZZZZ 99999 BEGINNER MINOR DBADMIN --- unused ---
 4384 ZZZZZ 99999 BEGINNER MINOR DBADMIN GROUP BY ROLLUP clause not allowed for this statement. Reason: $0~String0
 4390 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The OLAP History row size exceeds the limit of $0~Int0 bytes
 4391 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Parameters and outer references in the PARTITION BY or ORDER BY clause of a window function are not supported.
 4392 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The REGEXP predicate only supports the default collating sequence.
 4400 ZZZZZ 99999 BEGINNER MAJOR LOGONLY Internal error
-4401 ZZZZZ 99999 BEGINNER MAJOR LOGONLY No Privileged Segment
-4402 ZZZZZ 99999 BEGINNER MAJOR LOGONLY Program file not authorized
-4403 ZZZZZ 99999 BEGINNER MAJOR LOGONLY Security Server not running
-4404 ZZZZZ 99999 BEGINNER MAJOR LOGONLY Registration with Security Server failed
-4405 ZZZZZ 99999 BEGINNER MAJOR LOGONLY No shared segment in Security Server
-4406 ZZZZZ 99999 BEGINNER MINOR LOGONLY Too many requestors to Security Server
-4407 ZZZZZ 99999 BEGINNER MAJOR LOGONLY Security policy file not found
-4408 ZZZZZ 99999 BEGINNER MAJOR LOGONLY Error in security policy file
-4409 ZZZZZ 99999 BEGINNER MAJOR LOGONLY Bad security policy
-4410 ZZZZZ 99999 BEGINNER MAJOR LOGONLY Digest mismatch
-4411 ZZZZZ 99999 BEGINNER MAJOR LOGONLY Decryption error
-4412 ZZZZZ 99999 BEGINNER MAJOR LOGONLY SECKEYS key file not found
-4413 ZZZZZ 99999 BEGINNER MAJOR LOGONLY SECKEYS key file error
-4414 ZZZZZ 99999 BEGINNER MAJOR LOGONLY Certificate expired
-4415 ZZZZZ 99999 BEGINNER MAJOR LOGONLY Certificate not found
-4416 ZZZZZ 99999 BEGINNER MINOR LOGONLY Certificate has been updated
-4417 ZZZZZ 99999 BEGINNER MAJOR LOGONLY Error in shared segment
-4418 ZZZZZ 99999 BEGINNER MAJOR LOGONLY Unauthorized user
+4401 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4402 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4403 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4404 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4405 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4406 ZZZZZ 99999 BEGINNER MINOR LOGONLY --- unused ---
+4407 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4408 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4409 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4410 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4411 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4412 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4413 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4414 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4415 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4416 ZZZZZ 99999 BEGINNER MINOR LOGONLY --- unused ---
+4417 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
+4418 ZZZZZ 99999 BEGINNER MAJOR LOGONLY --- unused ---
 4450 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Function $0~String0 is not a built-in function or registered user-defined function.
 4451 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Action $0~String0 is not a registered action for user-defined function $1~String1.
 4452 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Function $0~String0 expects $1~Int0 input values but was called with $2~Int1 values.
-4453 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Action $0~String0 of user-defined function $1~String1 expects $2~Int0 input values but was called with $3~Int1 values.
-4454 ZZZZZ 99999 BEGINNER MAJOR DBADMIN User-defined function $0~String0 expects an action to be specified in argument position $1~Int0 but the argument at position $2~Int1 is not a character literal.
+4453 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
+4454 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
 4455 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The supplied type for input value $0~Int0 of user-defined function $1~String0 was $2~String1 which is not compatible with the expected type $3~String2.
 4456 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The supplied type for input value $0~Int0 of action $1~String0 of user-defined function $2~String1 was $3~String2 which is not compatible with the expected type $4~String3.
 4457 ZZZZZ 99999 BEGINNER MAJOR DBADMIN An error was encountered processing metadata for user-defined function $0~String0.  Details: $1~String1.
-4458 ZZZZZ 99999 BEGINNER MAJOR DBADMIN An error was encountered processing metadata for action $0~String0 of user-defined function $1~String1.  Details: $2~String2.
-4459 ZZZZZ 99999 BEGINNER MAJOR DBADMIN User-defined function $0~String0 returns $1~Int0 values, but was called in a context where the number of expected return values is $2~Int1.
-4460 ZZZZZ 99999 BEGINNER MAJOR DBADMIN User-defined function $0~String0 expects an argument of the form 'table.*' in argument position $1~Int0.
+4458 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
+4459 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
+4460 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused ---
 4461 ZZZZZ 42000 BEGINNER MAJOR DBADMIN User-defined function $0~String0 appears in the argument list of a sequence function.  This is not allowed.
 4462 ZZZZZ 42000 BEGINNER MAJOR DBADMIN User-defined function $0~String0 appears in the ORDER BY clause of an OLAP window function.  This is not allowed.
 4463 ZZZZZ 42000 BEGINNER MAJOR DBADMIN User-defined function $0~String0 appears in the ON clause of a full outer join.  This is not allowed.
@@ -1437,7 +1438,7 @@ $1~String1 --------------------------------
 4481 42000 99999 BEGINNER MINOR LOGONLY The user does not have $0~string0 privilege on table or view $1~string1$2~string2.
 4482 42000 99999 BEGINNER MINOR LOGONLY The user does not have $0~string0 privilege on user-defined routine $1~string1.
 4483 ZZZZZ 99999 BEGINNER MINOR LOGONLY This LOB conversion function is not allowed in the VALUES clause with multiple input value rows. Use it with a single value row.
-4484 ZZZZZ 99999 BEGINNER MINOR LOGONLY -- available --
+4484 ZZZZZ 99999 BEGINNER MAJOR DBADMIN A subquery specifies both [LAST N] and ORDER BY. This is not supported.
 4485 ZZZZZ 99999 BEGINNER MINOR LOGONLY Invalid option for BULK LOAD or BULK UNLOAD $0~String0 
 4486 ZZZZZ 99999 BEGINNER MINOR LOGONLY Constraints are not supported with $0~String0. Disable the constraints and try again. 
 4487 ZZZZZ 99999 BEGINNER MINOR LOGONLY Invalid Path: $0~String0  
@@ -1449,6 +1450,8 @@ $1~String1 --------------------------------
 4493 ZZZZZ 99999 BEGINNER MINOR LOGONLY Stored Descriptor Status: $0~String0
 4494 ZZZZZ 99999 BEGINNER MINOR LOGONLY LOAD is not supported on a table with LOB columns. Table $0~TableName has LOB column $1~ColumnName.
 4495 ZZZZZ 99999 BEGINNER MINOR LOGONLY UNLOAD is not supported on a SELECT with LOB columns. $0~ColumnName is a LOB column.
+4496 42000 99999 BEGINNER MAJOR DBADMIN $0~String0 is supported only with datetime fields.
+4497 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The $0~String0 operand of $1~String1 must be $2~String2.
 5000 ZZZZZ 99999 ADVANCED MAJOR DBADMIN Internal error in the query normalizer.
 5001 ZZZZZ 99999 ADVANDED MINOR LOGONLY Common subexpression $0~String0 will not be shared among multiple consumers. Reason: $1~String1.
 6000 ZZZZZ 99999 ADVANCED MAJOR DBADMIN Internal error in the query optimizer.
@@ -1473,6 +1476,7 @@ $1~String1 --------------------------------
 7003 42000 99999 BEGINNER MAJOR DBADMIN A plan using cluster sampling could not be produced for this query.
 7004 ZZZZZ 99999 BEGINNER MAJOR DBADMIN A parallel extract plan could not be produced. Possible causes include an incompatible Control Query Shape (CQS) specification, use of rowset expressions, or use of SQL features that cannot be parallelized such as [FIRST/LAST N], table-valued functions, stream access to tables, and embedded updates or deletes.
 7005 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Use of selection predicates in parallel extract consumer queries is not allowed.
+7008 ZZZZZ 99999 BEGINNER MINOR DBADMIN IUD not supported with hbase replication enabled table $0~TableName when HBASE_READ_REPLICA is enabled. 
 7350 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Incompatible consistency level of $0~Int0 for Halloween protection
 7351 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Incompatible lock size of $0~Int0 for Halloween protection.
 7352 ZZZZZ 99999 BEGINNER MAJOR DBADMIN A Hash-Join that may overflow its memory to disk can not accept input rows longer than $0~Int0 bytes.
@@ -1533,6 +1537,7 @@ $1~String1 --------------------------------
 8142 ZZZZZ 99999 ADVANCED INFRM LOGONLY An error was artificially injected, to test error handling. Testpoint $0~string0, Value $1~string1.
 8143 ZZZZZ 99999 ADVANCED INFRM LOGONLY The requested operation stopped $0~Int0 server processes.
 8144 ZZZZZ 99999 ADVANCED MAJOR DIALOUT Corruption is detected in table $0~string0$1~string1.
+8145 ZZZZZ 99999 BEGINNER MAJOR DBADMIN This statement is not supported or incorrect options were specified. Reason: $0~string0
 8300 ZZZZZ 99999 BEGINNER MINOR LOGONLY Late name resolution failed for $0~String0 $1~String1.
 8301 ZZZZZ 99999 ADVANCED MAJOR DBADMIN File system error $0~NSKCode occurred on anchor file $1~String0.
 8302 ZZZZZ 99999 BEGINNER MAJOR DBADMIN All partitions of $0~String0 $1~TableName are unavailable.
@@ -1544,9 +1549,9 @@ $1~String1 --------------------------------
 8403 22011 99999 BEGINNER MINOR LOGONLY The length argument of function SUBSTRING cannot be less than zero or greater than source string length.
 8404 22027 99999 BEGINNER MINOR LOGONLY The trim character argument of function TRIM must be one character in length.
 8405 22008 99999 BEGINNER MINOR LOGONLY The operand of function CONVERTTIMESTAMP is out of range.
-8406 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU --- unused as of 03/30/04 ---
+8406 22001 99999 BEGINNER MINOR LOGONLY An overflow occurred during conversion of source to target datatype. 
 8407 22008 99999 BEGINNER MINOR LOGONLY The operand of function JULIANTIMESTAMP is out of range.
-8408 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU --- unused as of 03/30/04 ---
+8408 22001 99999 BEGINNER MINOR LOGONLY An error occurred during the evaluation of a conversion expression. Details:$0~string0
 8409 22019 99999 BEGINNER MINOR LOGONLY The escape character argument of a LIKE predicate must be one character in length.
 8410 22025 99999 BEGINNER MINOR LOGONLY An escape character in a LIKE pattern must be followed by another escape character, an underscore, or a percent character.
 8411 22003 99999 BEGINNER MINOR LOGONLY A numeric overflow occurred during an arithmetic computation or data conversion.$0~string0
@@ -1578,7 +1583,7 @@ $1~String1 --------------------------------
 8437 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Mismatch detected between external table and underlying hive table definitions.
 8440 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The size of the history buffer is too small to execute one or more of the OLAP Windowed Functions in the query. 
 8441 ZZZZZ 99999 BEGINNER MAJOR DBADMIN one or more of the OLAP Windowed Functions in the query may require overflow which is not supported yet.
-8442 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Unable to access $0~string0 interface. Call to $1~string1 returned error $2~string2($0~int0). Error detail $1~int1.
+8442 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Unable to access $0~string0 interface. Call to $0~string0 returned error $1~string1($0~int0). Error detail: $1~int1. Cause: $2~string2.
 8443 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Provided LOB handle is invalid.
 8444 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Only one lob handle can be returned by child for data extract.
 8445 ZZZZZ 99999 BEGINNER MAJOR DBADMIN An error occurred during transformation of hdfs row to sql row. Error Detail: $0~string0 
@@ -1589,6 +1594,11 @@ $1~String1 --------------------------------
 8450 ZZZZZ 99999 BEGINNER MINOR LOGONLY ESP number ($0~Int0) has processed ($1~Int1) transactions of the LRU operation on table $2~String0.
 8451 ZZZZZ 99999 BEGINNER MINOR LOGONLY Error $0~String0  returned while retrieving region stats from hbase.
 8452 ZZZZZ 99999 BEGINNER MINOR LOGONLY The regular expression is invalid. Cause: $0~String0
+8453 ZZZZZ 99999 BEGINNER MINOR LOGONLY This expression results in an invalid interval value '$0~String0'
+8454 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU --- unused ---
+8455 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU --- unused ---
+8456 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU --- unused ---
+8457 ZZZZZ 99999 BEGINNER MAJOR DBADMIN An unexpectedly long row was read from a Hive table. The row is too long to process.
 8550 ZZZZZ 99999 ADVANCED MAJOR DBADMIN Error $0~NSKCode was returned by the Data Access Manager.
 8551 ZZZZZ 99999 ADVANCED MAJOR DBADMIN Error $0~NSKCode was returned by the file system on $0~string0$1~string1.
 8552 ZZZZZ 99999 ADVANCED MAJOR DBADMIN Error $0~int0 was returned by the file system while fetching the version of the system $0~string0.
@@ -1597,6 +1607,7 @@ $1~String1 --------------------------------
 8555 ZZZZZ 99999 ADVANCED CRTCL DIALOUT An internal error occurred in the SQL executor in the disk process.
 8556 ZZZZZ 99999 BEGINNER MAJOR DBADMIN An error occurred while accessing HBase table $0~string0. $1~string1
 8557 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The file name passed to externaltolob exceeds 256 bytes.
+8558 ZZZZZ 99999 BEGINNER MAJOR DBADMIN The LOB operation is prevented due to conflicting access $0~string0.
 8570 ZZZZZ 99999 ADVANCED MAJOR DBADMIN SQL could not allocate sufficient memory to build query.
 8571 ZZZZZ 99999 ADVANCED MAJOR DBADMIN SQL could not allocate sufficient memory to execute query.
 8572 ZZZZZ 99999 ADVANCED CRTCL DIALOUT The statement has incurred a fatal error and must be deallocated.
@@ -1680,7 +1691,7 @@ $1~String1 --------------------------------
 8676 ZZZZZ 99999 ADVANCED INFRM DBADMIN Cannot suspend the query because it is already suspended.
 8677 ZZZZZ 99999 ADVANCED INFRM DBADMIN Cannot activate the query because it is not suspended.
 8690 ZZZZZ 99999 BEGINNER MINOR LOGONLY An invalid character value encountered in TRANSLATE function. Source charset $0~string0 , Target charset $1~string1. Error data in HEX: $2~string2 .
-8691 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU ---- unused ----
+8691 ZZZZZ 99999 BEGINNER MINOR LOGONLY Field position must be greater than zero, currently is $0~int0.
 8692 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU ---- unused ----
 8693 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU ---- unused ----
 8694 ZZZZZ 99999 UUUUUUUU UUUUU UUUUUUU ---- unused ----
@@ -1803,7 +1814,7 @@ drop the default context
 8889 ZZZZZ 99999 BEGINNER MINOR LOGONLY The provided buffer to retrieve Result Set proxy syntax is either null or not big enough.
 8890 ZZZZZ 99999 ADVANCED MAJOR DBADMIN The SQL compiler failed to initialize properly.  Query results may differ from what is expected, due to different compiler defaults.
 8891 ZZZZZ 99999 BEGINNER MINOR LOGONLY Non-ASCII character host variable type was specified for $0~string0 field.
-8892 ZZZZZ 99999  UUUUUUUU UUUUU UUUUUUU --- unused as of 5/7/12 ---
+8892 07009 99999 BEGINNER MINOR LOGONLY The statement argument count exceeds the descriptor entry count.
 8893 07008 99999 BEGINNER MINOR LOGONLY The statement argument count does not match the descriptor entry count.
 8894 ZZZZZ 99999 ADVANCED MAJOR DIALOUT Argument $0~string0 of CLI function $1~string1 is reserved for future use and must be set to $2~string2 when calling the function.
 8895 ZZZZZ 99999 BEGINNER MINOR LOGONLY The character set $0~string0 for the descriptor item SQLDESC_CHAR_SET is not valid.
@@ -1899,7 +1910,7 @@ drop the default context
 9217 ZZZZZ 99999 BEGINNER INFRM DBADMIN The statement will have no effect because no histograms are currently maintained for the table.
 9218 ZZZZZ 99999 BEGINNER INFRM DBADMIN The statement will have no effect because no histograms need to be updated.
 9219 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Incremental UPDATE STATISTICS: An operation failed, possibly due to an invalid WHERE clause.
-9220 ZZZZZ 99999 BEGINNER INFRM DBADMIN The table is empty, so no persistent sample table was created.
+9220 ZZZZZ 99999 BEGINNER INFRM DBADMIN No persistent sample table was created because the table was empty or there were no histograms needing update.
 9221 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Incremental UPDATE STATISTICS cannot be performed due to the absence of the IUS persistent sample table for $0~string0.  Use a regular UPDATE STATISTICS command with the sample clause and PERSISTENT first to create such a persistent sample table.
 9222 ZZZZZ 99999 BEGINNER MINOR LOGONLY Incremental UPDATE STATISTICS: the rowcount in an interval for column $0~String0 changed more than the percentage specified by CQD USTAT_IUS_INTERVAL_ROWCOUNT_CHANGE_THRESHOLD. A regular UPDATE STATISTICS is performed instead.
 9223 ZZZZZ 99999 BEGINNER MINOR LOGONLY Incremental UPDATE STATISTICS: the total rowcount for column $0~String0 changed more than the percentage specified by CQD USTAT_IUS_TOTAL_ROWCOUNT_CHANGE_THRESHOLD. A regular UPDATE STATISTICS is performed instead.
@@ -1908,12 +1919,13 @@ drop the default context
 9226 ZZZZZ 99999 BEGINNER MINOR LOGONLY Incremental UPDATE STATISTICS: one interval for column $0~String0 is reset to zero. A regular UPDATE STATISTICS is performed instead.
 9227 ZZZZZ 99999 BEGINNER MINOR LOGONLY Incremental UPDATE STATISTICS: an interval for column $0~String0 is reduced to zero rows using IUS. A regular UPDATE STATISTICS is performed instead.
 9228 ZZZZZ 99999 BEGINNER MINOR LOGONLY There were no sample tables to drop.
+9229 ZZZZZ 99999 BEGINNER MAJOR DBADMIN More than $0~String0 columns were specified in the multi-column list $1~String1.
 9230 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Incremental UPDATE STATISTICS: $0~int0 columns could not be processed due to insufficient memory, and are being processed by regular UPDATE STATISTICS instead.
 9231 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Incremental UPDATE STATISTICS: only RANDOM <percentage> PERCENT is allowed as the sampling specification with PERSISTENT.
 9232 ZZZZZ 99999 BEGINNER MAJOR DBADMIN Incremental UPDATE STATISTICS: cannot proceed because of the on-going IUS transaction originated at $0~String0. 
-9233 ZZZZZ 99999 BEGINNER MAJOR DBADMIN --- unused --- 
+9233 ZZZZZ 99999 BEGINNER MAJOR DBADMIN No operation was done since the table consists only of LOB columns. 
 9234 ZZZZZ 99999 BEGINNER MINOR LOGONLY Incremental UPDATE STATISTICS: a new high frequency value is detected for column $0~string0. A regular UPDATE STATISTICS is performed instead.
-9235 ZZZZZ 99999 BEGINNER MINOR LOGONLY --- unused ---
+9235 ZZZZZ 99999 BEGINNER MINOR LOGONLY Histogram for non-existent column found on table $0~string0. Consider dropping and recreating histograms for this table.
 9236 ZZZZZ 99999 BEGINNER MINOR LOGONLY Incremental UPDATE STATISTICS: the histogram for column $0~string0 is empty. A regular UPDATE STATISTICS is performed instead.
 9237 ZZZZZ 99999 BEGINNER MINOR LOGONLY Incremental UPDATE STATISTICS: WHERE clause of an IUS statement cannot contain $0~String0.
 9238 ZZZZZ 99999 BEGINNER INFRM DBADMIN Histograms were updated successfully, but partition statistics could not be updated from file labels.

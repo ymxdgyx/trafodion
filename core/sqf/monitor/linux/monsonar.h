@@ -120,6 +120,21 @@ class CMonStats
         req_type_newprocess++;
     }
 
+    virtual inline void req_type_nameserverstop_Incr()
+    {
+        req_type_nameserverstop++;
+    }
+
+    virtual inline void req_type_nameserverinfo_Incr()
+    {
+        req_type_nameserverinfo++;
+    }
+
+    virtual inline void req_type_nameserverstart_Incr()
+    {
+        req_type_nameserverstart++;
+    }
+
     virtual inline void req_type_nodedown_Incr()
     {
         req_type_nodedown++;
@@ -173,16 +188,6 @@ class CMonStats
     virtual inline void req_type_tmleader_Incr()
     {
         req_type_tmleader++;
-    }
-
-    virtual inline void req_type_tmseqnum_Incr()
-    {
-        req_type_tmseqnum++;
-    }
-
-    virtual inline void req_type_tmsync_Incr()
-    {
-        req_type_tmsync++;
     }
 
     virtual inline void req_type_zoneinfo_Incr()
@@ -354,6 +359,9 @@ class CMonStats
     unsigned long long req_type_kill;
     unsigned long long req_type_mount;
     unsigned long long req_type_newprocess;
+    unsigned long long req_type_nameserverinfo;
+    unsigned long long req_type_nameserverstart;
+    unsigned long long req_type_nameserverstop;
     unsigned long long req_type_nodedown;
     unsigned long long req_type_nodeinfo;
     unsigned long long req_type_nodeup;
@@ -365,8 +373,6 @@ class CMonStats
     unsigned long long req_type_shutdown;
     unsigned long long req_type_startup;
     unsigned long long req_type_tmleader;
-    unsigned long long req_type_tmseqnum;
-    unsigned long long req_type_tmsync;
     unsigned long long req_type_zoneinfo;
 
     unsigned long long msg_type_close;
@@ -547,16 +553,6 @@ class CMonSonarStats: public CMonStats
         req_type_tmleader.increment();
     }
 
-    virtual inline void req_type_tmseqnum_Incr()
-    {
-        req_type_tmseqnum.increment();
-    }
-
-    virtual inline void req_type_tmsync_Incr()
-    {
-        req_type_tmsync.increment();
-    }
-
     virtual inline void req_type_zoneinfo_Incr()
     {
         req_type_zoneinfo.increment();
@@ -685,8 +681,6 @@ class CMonSonarStats: public CMonStats
     IncrementingCounter req_type_shutdown;
     IncrementingCounter req_type_startup;
     IncrementingCounter req_type_tmleader;
-    IncrementingCounter req_type_tmseqnum;
-    IncrementingCounter req_type_tmsync;
     IncrementingCounter req_type_zoneinfo;
     IncrementingCounter req_sync;
 

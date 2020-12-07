@@ -286,41 +286,6 @@ short ExExeUtilTcb::work()
   return -1;
 }
 
-short ExExeUtilTcb::extractObjectParts(
-     char * objectName,
-     char * sys,
-     char * &cat,
-     char * &sch,
-     char * &tab,
-     char * ansiNameBuf)
-{
-  Lng32 error = 0;
-
-  error = ComRtGetOSClusterName(sys, 10, NULL);
-  if (error <= 0)
-    {
-      return -1;
-    }
-
-  char * parts[3];
-  Lng32 numParts;
-  if (LateNameInfo::extractParts(objectName,
-				 ansiNameBuf,
-				 numParts,
-				 parts,
-				 FALSE) ||
-      (numParts != 3))
-    {
-      return -1;
-    }
-
-  cat = parts[0];
-  sch = parts[1];
-  tab = parts[2];
-
-  return 0;
-}
-
 NABoolean ExExeUtilTcb::isUpQueueFull(short size)
 {
   if ((qparent_.up->getSize() - qparent_.up->getLength()) < size)
@@ -337,7 +302,8 @@ short ExExeUtilTcb::moveRowToUpQueue(const char * row, Lng32 len,
   return  retcode;
 }
 
-char * ExExeUtilTcb::getTimeAsString(Int64 elapsedTime, char * timeBuf)
+char * ExExeUtilTcb::getTimeAsString(Int64 elapsedTime, char * timeBuf,
+                                     NABoolean noUsec)
 {
   ULng32 sec = (ULng32) (elapsedTime / 1000000);
   ULng32 usec = (ULng32) (elapsedTime % 1000000);
@@ -346,9 +312,13 @@ char * ExExeUtilTcb::getTimeAsString(Int64 elapsedTime, char * timeBuf)
   ULng32 hour = min/60;
   min = min % 60;
   
-  str_sprintf (timeBuf,  "%02u:%02u:%02u.%03u",
-	       hour, min, sec, TO_FMT3u(usec));
-
+  if (noUsec)
+    str_sprintf (timeBuf,  "%02u:%02u:%02u",
+                 hour, min, sec);
+  else
+    str_sprintf (timeBuf,  "%02u:%02u:%02u.%03u",
+                 hour, min, sec, TO_FMT3u(usec));
+   
   return timeBuf;
 }
 
@@ -1482,7 +1452,6 @@ short ExExeUtilTcb::createServer(char *serverName,
 				 char *nodeName,
 				 short cpu,
 				 const char *partnName,
-				 Lng32 priority,
 				 IpcServer* &ipcServer,
 				 NABoolean logError,
 				 const char * operation)
@@ -1532,7 +1501,6 @@ short ExExeUtilTcb::createServer(char *serverName,
 			      ipcHeap,
 			      nodeName,
 			      cpu,
-			      priority, 
 			      1, // espLevel (not relevent)
 			      FALSE, // no Xn
 			      TRUE, // waited creation

@@ -25,32 +25,145 @@
 
 using namespace std;
 
+#include <signal.h>
+#include <unistd.h>
+#include <netdb.h>
+#include <sys/socket.h>
+
 #include "commaccept.h"
 #include "monlogging.h"
 #include "montrace.h"
 #include "monitor.h"
 
-#include <signal.h>
-#include <unistd.h>
-
-extern CCommAccept CommAccept;
+extern CCommAccept *CommAccept;
 extern CMonitor *Monitor;
 extern CNode *MyNode;
 extern CNodeContainer *Nodes;
 extern int MyPNID;
 extern char MyCommPort[MPI_MAX_PORT_NAME];
+extern char Node_name[MPI_MAX_PROCESSOR_NAME];
+extern CommType_t CommType;
+extern bool IsRealCluster;
+
 extern char *ErrorMsg (int error_code);
 extern const char *StateString( STATE state);
-extern CommType_t CommType;
 
 CCommAccept::CCommAccept()
            : accepting_(true)
            , shutdown_(false)
+           , ioWaitTimeout_(EPOLL_IO_WAIT_TIMEOUT_MSEC)
+           , ioRetryCount_(EPOLL_IO_RETRY_COUNT)
+           , commSock_(-1)
+           , commSocketPort_(-1)
+           , commPort_("")
            , thread_id_(0)
 {
     const char method_name[] = "CCommAccept::CCommAccept";
     TRACE_ENTRY;
 
+    // Use the EPOLL timeout and retry values
+    char *ioWaitTimeoutEnv = getenv( "SQ_MON_EPOLL_WAIT_TIMEOUT" );
+    if ( ioWaitTimeoutEnv )
+    {
+        // Timeout in seconds
+        ioWaitTimeout_ = atoi( ioWaitTimeoutEnv );
+        char *ioRetryCountEnv = getenv( "SQ_MON_EPOLL_RETRY_COUNT" );
+        if ( ioRetryCountEnv )
+        {
+            ioRetryCount_ = atoi( ioRetryCountEnv );
+        }
+        if ( ioRetryCount_ > EPOLL_IO_RETRY_COUNT_MAX )
+        {
+            ioRetryCount_ = EPOLL_IO_RETRY_COUNT_MAX;
+        }
+    }
+
+    int serverCommPort = 0;
+    int val = 0;
+    unsigned char addr[4] = {0,0,0,0};
+    struct hostent *he;
+
+    he = gethostbyname( Node_name );
+    if ( !he )
+    {
+        char ebuff[256];
+        char buf[MON_STRING_BUF_SIZE];
+        snprintf( buf, sizeof(buf)
+                , "[%s@%d] gethostbyname(%s) error: %s\n"
+                , method_name, __LINE__
+                , Node_name, strerror_r( h_errno, ebuff, 256 ) );
+        mon_log_write( MON_COMMACCEPT_COMMACCEPT_1, SQ_LOG_CRIT, buf );
+
+        mon_failure_exit();
+    }
+    memcpy( addr, he->h_addr, 4 );
+
+#ifdef NAMESERVER_PROCESS
+    char *env = getenv ("NS_COMM_PORT");
+#else
+    char *env = getenv("MONITOR_COMM_PORT");
+#endif
+    if ( env )
+    {
+        val = atoi(env);
+        if ( val > 0)
+        {
+            if ( !IsRealCluster )
+            {
+                val += MyPNID;
+            }
+            serverCommPort = val;
+        }
+    }
+
+    if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
+    {
+#ifdef NAMESERVER_PROCESS
+        trace_printf( "%s@%d NS_COMM_PORT Node_name=%s, env=%s, serverCommPort=%d, val=%d\n"
+#else
+        trace_printf( "%s@%d MONITOR_COMM_PORT Node_name=%s, env=%s, serverCommPort=%d, val=%d\n"
+#endif
+                    , method_name, __LINE__
+                    , Node_name, env, serverCommPort, val );
+    }
+
+    commSock_ = CComm::Listen( &serverCommPort );
+    if ( commSock_ < 0 )
+    {
+        char ebuff[256];
+        char buf[MON_STRING_BUF_SIZE];
+        snprintf( buf, sizeof(buf)
+#ifdef NAMESERVER_PROCESS
+                , "[%s@%d] Listen(NS_COMM_PORT=%d) error: %s\n"
+#else
+                , "[%s@%d] Listen(MONITOR_COMM_PORT=%d) error: %s\n"
+#endif
+                , method_name, __LINE__, serverCommPort
+                , strerror_r( errno, ebuff, 256 ) );
+        mon_log_write( MON_COMMACCEPT_COMMACCEPT_2, SQ_LOG_CRIT, buf );
+
+        mon_failure_exit();
+    }
+    else
+    {
+        snprintf( MyCommPort, sizeof(MyCommPort)
+                , "%d.%d.%d.%d:%d"
+                , (int)((unsigned char *)addr)[0]
+                , (int)((unsigned char *)addr)[1]
+                , (int)((unsigned char *)addr)[2]
+                , (int)((unsigned char *)addr)[3]
+                , serverCommPort );
+        setCommSocketPort( serverCommPort );
+        setCommPort( MyCommPort );
+
+        if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
+            trace_printf( "%s@%d Initialized my comm socket port, "
+                          "pnid=%d (%s:%s) (commPort=%s)\n"
+                        , method_name, __LINE__
+                        , MyPNID, Node_name, MyCommPort
+                        , getCommPort() );
+
+    }
 
     TRACE_EXIT;
 }
@@ -64,6 +177,15 @@ CCommAccept::~CCommAccept()
     TRACE_EXIT;
 }
 
+void CCommAccept::connectToCommSelf( void )
+{
+    const char method_name[] = "CCommAccept::connectToCommSelf";
+    TRACE_ENTRY;
+
+    CComm::ConnectLocal( getCommSocketPort() );
+
+    TRACE_EXIT;
+}
 
 struct message_def *CCommAccept::Notice( const char *msgText )
 {
@@ -219,12 +341,18 @@ bool CCommAccept::sendNodeInfoSock( int sockFd )
                             , i, node->GetPNid(), node->GetName());
             }
 
-            nodeInfo[i].pnid = -1;
             nodeInfo[i].nodeName[0] = '\0';
             nodeInfo[i].commPort[0] = '\0';
             nodeInfo[i].syncPort[0] = '\0';
+            nodeInfo[i].pnid = -1;
             nodeInfo[i].creatorPNid = -1;
         }
+        nodeInfo[i].creatorShellPid = -1;
+        nodeInfo[i].creatorShellVerifier = -1;
+        nodeInfo[i].creator = false;
+        nodeInfo[i].ping = false;
+        nodeInfo[i].nsPid = -1;
+        nodeInfo[i].nsPNid = -1;
     }
 
     if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
@@ -246,9 +374,13 @@ bool CCommAccept::sendNodeInfoSock( int sockFd )
         }
     }
 
-    rc = Monitor->SendSock( (char *) nodeInfo
-                          , nodeInfoSize
-                          , sockFd);
+    rc = CComm::SendWait( sockFd
+                        , (char *) nodeInfo
+                        , nodeInfoSize
+                        , ioWaitTimeout_
+                        , ioRetryCount_
+                        , (char *)"Remote joining node"
+                        , method_name );
     if ( rc )
     {
         char buf[MON_STRING_BUF_SIZE];
@@ -315,7 +447,7 @@ void CCommAccept::processNewComm(MPI_Comm interComm)
                     , nodeId.creatorShellVerifier );
     }
 
-    CNode * node= Nodes->GetNode( nodeId.nodeName );
+    CNode * node = Nodes->GetNode( nodeId.nodeName );
     int pnid = -1;
     if ( node != NULL )
     {   // Store port number for the node
@@ -347,6 +479,7 @@ void CCommAccept::processNewComm(MPI_Comm interComm)
                  method_name, ErrorMsg(rc));
         mon_log_write(MON_COMMACCEPT_5, SQ_LOG_ERR, buf);
 
+#ifndef NAMESERVER_PROCESS
         if ( MyNode->IsCreator() )
         {
             snprintf(buf, sizeof(buf), "Cannot merge intercomm for node %s: %s.\n",
@@ -356,6 +489,7 @@ void CCommAccept::processNewComm(MPI_Comm interComm)
                                                    , Notice( buf )
                                                    , NULL );
         }
+#endif
         return;
     }
 
@@ -372,6 +506,7 @@ void CCommAccept::processNewComm(MPI_Comm interComm)
             MPI_Comm_free( &intraComm );
             MPI_Comm_free( &interComm );
 
+#ifndef NAMESERVER_PROCESS
             char buf[MON_STRING_BUF_SIZE];
             snprintf(buf, sizeof(buf), "Cannot send node/port info to "
                      " node %s monitor: %s.\n", nodeId.nodeName, ErrorMsg(rc));
@@ -379,6 +514,7 @@ void CCommAccept::processNewComm(MPI_Comm interComm)
                                                    , MyNode->GetCreatorVerifier()
                                                    , Notice( buf )
                                                    , NULL );
+#endif
             return;
         }
 
@@ -417,6 +553,7 @@ void CCommAccept::processNewComm(MPI_Comm interComm)
                      ErrorMsg(rc));
             mon_log_write(MON_COMMACCEPT_6, SQ_LOG_ERR, buf);    
 
+#ifndef NAMESERVER_PROCESS
             if ( MyNode->IsCreator() )
             {
                 snprintf(buf, sizeof(buf), "Cannot send connect acknowledgment "
@@ -426,6 +563,7 @@ void CCommAccept::processNewComm(MPI_Comm interComm)
                                                        , Notice( buf )
                                                        , NULL );
             }
+#endif
 
             return;
         }
@@ -462,12 +600,14 @@ void CCommAccept::processNewComm(MPI_Comm interComm)
                      method_name, ErrorMsg(rc));
             mon_log_write(MON_COMMACCEPT_7, SQ_LOG_ERR, buf);
 
+#ifndef NAMESERVER_PROCESS
             snprintf(buf, sizeof(buf), "Unable to obtain node status from "
                      "node %s monitor: %s.\n", nodeId.nodeName, ErrorMsg(rc));
             SQ_theLocalIOToClient->putOnNoticeQueue( MyNode->GetCreatorPid()
                                                    , MyNode->GetCreatorVerifier()
                                                    , Notice( buf )
                                                    , NULL );
+#endif
 
             node->SetState( State_Down );
 
@@ -487,6 +627,7 @@ void CCommAccept::processNewComm(MPI_Comm interComm)
             }
             else
             {
+#ifndef NAMESERVER_PROCESS
                 char buf[MON_STRING_BUF_SIZE];
                 snprintf(buf, sizeof(buf), "Node %s monitor failed to complete "
                          "initialization\n", nodeId.nodeName);
@@ -494,6 +635,7 @@ void CCommAccept::processNewComm(MPI_Comm interComm)
                                                        , MyNode->GetCreatorVerifier()
                                                        , Notice( buf )
                                                        , NULL );
+#endif
                 node->SetState( State_Down ); 
 
                 MPI_Comm_free ( &interComm );
@@ -518,9 +660,13 @@ void CCommAccept::processNewSock( int joinFd )
     mem_log_write(CMonLog::MON_CONNTONEWMON_2);
 
     // Get info about connecting monitor
-    rc = Monitor->ReceiveSock( (char *) &nodeId
-                             , sizeof(nodeId_t)
-                             , joinFd );
+    rc = CComm::ReceiveWait( joinFd
+                           , (char *) &nodeId
+                           , sizeof(nodeId_t)
+                           , ioWaitTimeout_
+                           , ioRetryCount_
+                           , (char *) "Remote monitor"
+                           , method_name );
     if ( rc )
     {   // Handle error
         close( joinFd );
@@ -528,6 +674,7 @@ void CCommAccept::processNewSock( int joinFd )
         snprintf(buf, sizeof(buf), "[%s], unable to obtain node id from new "
                  "monitor: %s.\n", method_name, ErrorMsg(rc));
         mon_log_write(MON_COMMACCEPT_8, SQ_LOG_ERR, buf);    
+        startAccepting();
         return;
     }
 
@@ -554,7 +701,14 @@ void CCommAccept::processNewSock( int joinFd )
                     , nodeId.ping );
     }
 
-    node= Nodes->GetNode( nodeId.nodeName );
+#ifdef NAMESERVER_PROCESS
+    if ( IsRealCluster )
+        node = Nodes->GetNode( nodeId.nodeName );
+    else
+        node = Nodes->GetNode( nodeId.pnid );
+#else
+    node = Nodes->GetNode( nodeId.nodeName );
+#endif
 
     if ( node == NULL )
     {
@@ -570,7 +724,7 @@ void CCommAccept::processNewSock( int joinFd )
         mon_log_write(MON_COMMACCEPT_9, SQ_LOG_ERR, buf);
 
         // Requests is complete, begin accepting connections again
-        CommAccept.startAccepting();
+        startAccepting();
 
         return;
     }
@@ -602,9 +756,13 @@ void CCommAccept::processNewSock( int joinFd )
                         , nodeId.ping );
         }
     
-        rc = Monitor->SendSock( (char *) &nodeId
-                              , sizeof(nodeId_t)
-                              , joinFd );
+        rc = CComm::SendWait( joinFd
+                            , (char *) &nodeId
+                            , sizeof(nodeId_t)
+                            , ioWaitTimeout_
+                            , ioRetryCount_
+                            , node?(char *)node->GetName():(char *)"Remote joining node"
+                            , method_name );
         if ( rc )
         {
             close( joinFd );
@@ -616,7 +774,7 @@ void CCommAccept::processNewSock( int joinFd )
         }
 
         // Requests is complete, begin accepting connections again
-        CommAccept.startAccepting();
+        startAccepting();
 
         return;
     }
@@ -634,22 +792,28 @@ void CCommAccept::processNewSock( int joinFd )
     if ( node->GetState() != State_Down )
     {
         int intdata = -1;
-        rc = Monitor->SendSock( (char *) &intdata
-                              , 0
-                              , joinFd );
-
+        rc = CComm::SendWait( joinFd
+                            , (char *) &intdata
+                            , 0
+                            , ioWaitTimeout_
+                            , ioRetryCount_
+                            , node?(char *)node->GetName():(char *)"Remote joining node"
+                            , method_name );
         close( joinFd );
+
+        // This reply will terminate the other monitor
+        node->SetState(State_Down);
 
         char buf[MON_STRING_BUF_SIZE];
         snprintf( buf, sizeof(buf)
-                , "[%s], got connection from node %s. "
+                , "[%s], got connection from node %s (pnid=%d). "
                   "Node not down, node state=%s\n"
-                , method_name, nodeId.nodeName
+                , method_name, nodeId.nodeName, nodeId.pnid
                 , StateString(node->GetState()));
         mon_log_write(MON_COMMACCEPT_10, SQ_LOG_ERR, buf);
 
         // Requests is complete, begin accepting connections again
-        CommAccept.startAccepting();
+        startAccepting();
 
         return;
     }
@@ -695,6 +859,7 @@ void CCommAccept::processNewSock( int joinFd )
         {   // Had problem communicating with new monitor
             close( joinFd );
 
+#ifndef NAMESERVER_PROCESS
             char buf[MON_STRING_BUF_SIZE];
             snprintf(buf, sizeof(buf), "Cannot send node/port info to "
                      " node %s monitor: %s.\n", nodeId.nodeName, ErrorMsg(rc));
@@ -702,6 +867,7 @@ void CCommAccept::processNewSock( int joinFd )
                                                    , MyNode->GetCreatorVerifier()
                                                    , Notice( buf )
                                                    , NULL );
+#endif
             return;
         }
     }
@@ -716,9 +882,13 @@ void CCommAccept::processNewSock( int joinFd )
 
         // Tell connecting monitor that we are ready to integrate it.
         int mypnid = MyPNID;
-        rc = Monitor->SendSock( (char *) &mypnid
-                              , sizeof(mypnid)
-                              , joinFd );
+        rc = CComm::SendWait( joinFd
+                            , (char *) &mypnid
+                            , sizeof(mypnid)
+                            , ioWaitTimeout_
+                            , ioRetryCount_
+                            , node?(char *)node->GetName():(char *)"Remote joining node"
+                            , method_name );
         if ( rc )
         {
             close( joinFd );
@@ -732,12 +902,26 @@ void CCommAccept::processNewSock( int joinFd )
         }
 
         // Connect to new monitor
-        integratingFd = Monitor->MkCltSock( node->GetSyncPort() );
+        integratingFd = CComm::Connect( node->GetSyncPort() );
         Monitor->addNewSock( pnid, 1, integratingFd );
 
         node->SetState( State_Merging ); 
 
         close( joinFd );
+#if 0
+        // TODO: This change may work when TmSync is no longer used
+        if (!isAccepting())
+        {
+            if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
+            {
+                trace_printf( "%s@%d - Begin accepting connections\n",
+                              method_name, __LINE__ );
+            }
+    
+            // Begin accepting connections
+            startAccepting();
+        }
+#endif
     }
 
     if ( MyNode->IsCreator() )
@@ -750,9 +934,13 @@ void CCommAccept::processNewSock( int joinFd )
 
         // Sanity check, tell integrating monitor my creator pnid
         int mypnid = MyPNID;
-        rc = Monitor->SendSock( (char *) &mypnid
-                              , sizeof(mypnid)
-                              , joinFd );
+        rc = CComm::SendWait( joinFd
+                            , (char *) &mypnid
+                            , sizeof(mypnid)
+                            , ioWaitTimeout_
+                            , ioRetryCount_
+                            , node?(char *)node->GetName():(char *)"Remote joining node"
+                            , method_name );
         if ( rc )
         {
             close( joinFd );
@@ -763,12 +951,14 @@ void CCommAccept::processNewSock( int joinFd )
                      ErrorMsg(rc));
             mon_log_write(MON_COMMACCEPT_12, SQ_LOG_ERR, buf);
 
+#ifndef NAMESERVER_PROCESS
             snprintf(buf, sizeof(buf), "Cannot send pnid acknowledgment "
                      "to new monitor: %s.\n", ErrorMsg(rc));
             SQ_theLocalIOToClient->putOnNoticeQueue( MyNode->GetCreatorPid()
                                                    , MyNode->GetCreatorVerifier()
                                                    , Notice( buf )
                                                    , NULL );
+#endif
             return;
         }
 
@@ -780,9 +970,13 @@ void CCommAccept::processNewSock( int joinFd )
 
         // Get new monitor acknowledgement that creator can connect
         int newpnid = -1;
-        rc = Monitor->ReceiveSock( (char *) &newpnid
-                                 , sizeof(newpnid)
-                                 , joinFd );
+        rc = CComm::ReceiveWait( joinFd
+                               , (char *) &newpnid
+                               , sizeof(newpnid)
+                               , ioWaitTimeout_
+                               , ioRetryCount_
+                               , (char *) node->GetName()
+                               , method_name );
         if ( rc || newpnid != pnid )
         {
             close( joinFd );
@@ -793,12 +987,14 @@ void CCommAccept::processNewSock( int joinFd )
                   ErrorMsg(rc));
             mon_log_write(MON_COMMACCEPT_13, SQ_LOG_ERR, buf);
 
+#ifndef NAMESERVER_PROCESS
             snprintf(buf, sizeof(buf), "Cannot receive connect acknowledgment "
                   "to new monitor: %s.\n", ErrorMsg(rc));
             SQ_theLocalIOToClient->putOnNoticeQueue( MyNode->GetCreatorPid()
                                                 , MyNode->GetCreatorVerifier()
                                                 , Notice( buf )
                                                 , NULL );
+#endif
             return;
         }
 
@@ -807,7 +1003,7 @@ void CCommAccept::processNewSock( int joinFd )
         Monitor->SetIntegratingPNid( pnid );
 
         // Connect to new monitor
-        integratingFd = Monitor->MkCltSock( node->GetSyncPort() );
+        integratingFd = CComm::Connect( node->GetSyncPort() );
         Monitor->addNewSock( pnid, 1, integratingFd );
 
         node->SetState( State_Merging ); 
@@ -823,9 +1019,13 @@ void CCommAccept::processNewSock( int joinFd )
         // Get status from new monitor indicating whether
         // it is fully connected to other monitors.
         nodeStatus_t nodeStatus;
-        rc = Monitor->ReceiveSock( (char *) &nodeStatus
-                                 , sizeof(nodeStatus_t)
-                                 , joinFd);
+        rc = CComm::ReceiveWait( joinFd
+                               , (char *) &nodeStatus
+                               , sizeof(nodeStatus_t)
+                               , ioWaitTimeout_
+                               , ioRetryCount_
+                               , (char *) node->GetName()
+                               , method_name );
         if ( rc != MPI_SUCCESS )
         {   // Handle error
             char buf[MON_STRING_BUF_SIZE];
@@ -834,12 +1034,14 @@ void CCommAccept::processNewSock( int joinFd )
                      method_name, ErrorMsg(rc));
             mon_log_write(MON_COMMACCEPT_14, SQ_LOG_ERR, buf);
 
+#ifndef NAMESERVER_PROCESS
             snprintf(buf, sizeof(buf), "Unable to obtain node status from "
                      "node %s monitor: %s.\n", nodeId.nodeName, ErrorMsg(rc));
             SQ_theLocalIOToClient->putOnNoticeQueue( MyNode->GetCreatorPid()
                                                    , MyNode->GetCreatorVerifier()
                                                    , Notice( buf )
                                                    , NULL );
+#endif
 
             node->SetState( State_Down );
             close( joinFd );
@@ -852,12 +1054,20 @@ void CCommAccept::processNewSock( int joinFd )
 
         if (nodeStatus.state == State_Up)
         {
+            if (trace_settings & (TRACE_INIT | TRACE_RECOVERY))
+            {
+                trace_printf( "%s@%d - Received reintegrate status: state=%s, error=%d\n"
+                            , method_name, __LINE__
+                            , StateString(nodeStatus.state)
+                            , nodeStatus.status );
+            }
             // communicate the change and handle it after sync
             // in ImAlive
             node->SetChangeState( true );
         }
         else
         {
+#ifndef NAMESERVER_PROCESS
             char buf[MON_STRING_BUF_SIZE];
             snprintf(buf, sizeof(buf), "Node %s monitor failed to complete "
                      "initialization\n", nodeId.nodeName);
@@ -865,6 +1075,7 @@ void CCommAccept::processNewSock( int joinFd )
                                                    , MyNode->GetCreatorVerifier()
                                                    , Notice( buf )
                                                    , NULL );
+#endif
             node->SetState( State_Down );
             close( joinFd );
             Monitor->ResetIntegratingPNid();
@@ -927,7 +1138,7 @@ void CCommAccept::commAcceptorIB()
             rc = MPI_Comm_accept( MyCommPort, MPI_INFO_NULL, 0, MPI_COMM_SELF,
                                   &interComm );
             // Stop accepting connections until this request completes
-            CommAccept.stopAccepting();
+            stopAccepting();
         }
         else
         {
@@ -999,9 +1210,9 @@ void CCommAccept::commAcceptorSock()
             }
     
             mem_log_write(CMonLog::MON_CONNTONEWMON_1);
-            joinFd = Monitor->AcceptCommSock();
+            joinFd = CComm::Accept( commSock_ );
             // Stop accepting connections until this request completes
-            CommAccept.stopAccepting();
+            stopAccepting();
         }
         else
         {
@@ -1054,7 +1265,7 @@ void CCommAccept::shutdownWork(void)
 
     // Set flag that tells the commAcceptor thread to exit
     shutdown_ = true;   
-    Monitor->ConnectToSelf();
+    connectToCommSelf();
     CLock::wakeOne();
 
     if (trace_settings & TRACE_INIT)

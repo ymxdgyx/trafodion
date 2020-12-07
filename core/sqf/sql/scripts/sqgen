@@ -23,14 +23,19 @@
 #
 # sqgen script - generates various files
 
+SQCONFIG_FILE=$TRAF_CONF/sqconfig
+SQCONFIG_PERSIST_FILE=$TRAF_CONF/sqconfig.persist
+
 function Usage {
-    script_name=`/bin/basename $0`
+    script_name=`basename $0`
     echo
-    echo $script_name generates various Trafodion files in the $TRAF_HOME/sql/scripts directory.
+    echo $script_name generates various Trafodion files in the $TRAF_VAR directory.
     echo
-    echo "Usage: $script_name [ -? | -h ] [<sqconfig_filename>]"
+    echo "Usage: $script_name [ -? | -h ] [<sqconfig_filename> <sqconfig_persist_filename>]"
+    echo "  -?    Help"
     echo "  -h    Help"
-    echo "  <sqconfig_filename> Name of the SQ config file (in $TRAF_HOME/sql/scripts directory)(defaults to 'sqconfig')"
+    echo "  <sqconfig_filename>         Name of the SQ config file (defaults to $SQCONFIG_FILE)"
+    echo "  <sqconfig_persist_filename> Name of the SQ config persist file (defaults to $SQCONFIG_PERSIST_FILE)"
     echo
     exit 1;
 }
@@ -38,34 +43,33 @@ function Usage {
 
 
 function GetSQcnfg {
-# Get SQ Node configuration
- TempList=`grep -o 'node-name=.[A-Za-z0-9\.\-]*' $TRAF_HOME/sql/scripts/sqconfig | cut -d "=" -f 2 | cut -d ";" -f 1 | sort -u`
+   # Get SQ Node configuration
+   TempList=`grep -o 'node-name=.[A-Za-z0-9\.\-]*' $SQCONFIG_FILE | cut -d "=" -f 2 | cut -d ";" -f 1 | sort -u`
 
- i=0
- for NODE in $TempList
-   do
-     SQNodeNames[$i]=$NODE
-     ((i=i+1))
+   i=0
+   for NODE in $TempList
+     do
+       if [[ ${NODE%%.*} == "$(hostname -s)" ]]; then
+         continue
+       fi
+       SQNodeNames[$i]=$NODE
+       ((i=i+1))
 
      done
 
- # Check that the Node names were corretly added
- NumberOfSQnodes=${#SQNodeNames[*]}
- ExNodeList="$(echo ${SQNodeNames[@]} | tr ' ' ',')"
+   # Check that the Node names were correctly added
+   ExNodeList="-w $(echo ${SQNodeNames[@]} | sed -e 's/ / -w '/g)"
 
-
- if [ ! -z ${ExNodeList[@]} ]; then   
-     echo "${ExNodeList[@]}"
- 
- else
-     echo
-     echo "Could not parse $TRAF_HOME/sql/scripts/sqconfig file."
-     echo "Please ensure sqenv.sh has been sourced and the sqconfig file is valid.  Then, re-run sqgen."
-     echo
-     exit 1;
- fi
-
- }
+   if [[ -n "$ExNodeList" ]]; then   
+      echo "$ExNodeList"
+   else
+      echo
+      echo "Could not parse $SQCONFIG_FILE file."
+      echo "Please ensure sqenv.sh has been sourced and the sqconfig file is valid.  Then, re-run sqgen."
+      echo
+      exit 1;
+   fi
+}
 
 ###########################################################
 # MAIN portion of sqgen begins
@@ -73,8 +77,7 @@ function GetSQcnfg {
 
 FT_FLAG=1
 PERF_FLAG=0
-SQCONFIG_FILE=sqconfig
-SQCONFIG_DB_FILE=sqconfig.db
+SQCONFIG_DB_FILE=$TRAF_VAR/sqconfig.db
 
 if [ -z $TRAF_HOME ]; then
     echo
@@ -118,30 +121,46 @@ fi
 
 cd $TRAF_HOME/sql/scripts
 
-# Check to make sure this is a real cluster
-if  [[ -n "$node_count" ]] && [[ "$node_count" -gt "1" ]]; then 
-    # The configuration database can only be created the first time.
-    # Since nodes can be added and deleted through the 'shell node add/delete'
-    # commands, the 'sqconfig' node section may not reflect the current node
-    # configured. The 'sqregen' script can be used to update the SQCONFIG_FILE
-    # node section to reflect the current node configuration stored in
-    # the SQCONFIG_DB_FILE.
-    echo "Checking for the configuration file ($SQCONFIG_DB_FILE)."
-    if [ -f $SQCONFIG_DB_FILE ]; then
-        echo
-        echo "The configuration file ($SQCONFIG_DB_FILE) exists."
-        echo "Use the 'sqshell node add/delete' commands to change the node membership in the configuration database."
-        echo "Use the 'sqshell persist add/delete' commands to change the persist object configuration in the configuration database."
-        echo "Use the 'sqregen -node' script to update the $SQCONFIG_FILE 'node' section with the"
-        echo "current node membership in the configuration database."
-        echo "Use the 'sqregen -persist' script to update the $SQCONFIG_FILE 'persist' section with the"
-        echo "current persist configuration stored in the configuration database."
-        exit 1
+# Check to make sure this is a real cluster configuration
+if  [[ -n "$node_count" ]] && [[ "$node_count" -gt "1" ]]  ; then
+    #
+    # NOTE: Temporarily bypass the following check and always recreate the
+    #       'sqconfig.db' file on the local node when invoked from an
+    #       agent like (CM).
+    #
+    #       Re-enable once the Trafodion Configuration database supports a 
+    #       non-SQLite storage method as well as support for the node add function.
+    #
+    if [[ -z ${TRAF_AGENT} ]]; then
+        if  [[ -n "$node_count" ]] && [[ "$node_count" -gt "1" ]]; then
+            # The configuration database can only be created the first time.
+            # Since nodes can be added and deleted through the 'shell node add/delete'
+            # commands, the 'sqconfig' node section may not reflect the current node
+            # configured. The 'sqregen' script can be used to update the SQCONFIG_FILE
+            # node section to reflect the current node configuration stored in
+            # the SQCONFIG_DB_FILE.
+            echo "Checking for the configuration file ($SQCONFIG_DB_FILE)."
+            if [ -f $SQCONFIG_DB_FILE ]; then
+                echo
+                echo "The configuration file ($SQCONFIG_DB_FILE) exists."
+                echo "Use the 'sqshell node add/delete' commands to change the node membership in the configuration database."
+                echo "Use the 'sqshell persist add/delete' commands to change the persist object configuration in the configuration database."
+                echo "Use the 'sqregen -node' script to update the $SQCONFIG_FILE 'node' section with the"
+                echo "current node membership in the configuration database."
+                echo "Use the 'sqregen -persist' script to update the $SQCONFIG_FILE 'persist' section with the"
+                echo "current persist configuration stored in the configuration database."
+                exit 1
+            fi
+        fi
+    else
+        # Temporary removal of configuration database file
+        rm -f $SQCONFIG_DB_FILE
     fi
 
     GetSQcnfg
 else
-    echo
+    #echo "node_count=${node_Count}"
+    #echo
     echo "Workstation environment - Not a clustered environment"
     if [ -f $SQCONFIG_DB_FILE ]; then
         echo
@@ -158,137 +177,150 @@ while [ $# != 0 ]
     case "$flag" in
         -h)  Usage ;;
         -?)  Usage ;;
-        *)   SQCONFIG_FILE=$1 ;;
+        *)   SQCONFIG_FILE=$1
+             echo "SQCONFIG_FILE=$SQCONFIG_FILE"
+             shift
+             SQCONFIG_PERSIST_FILE=$1
+             echo "SQCONFIG_PERSIST_FILE=$SQCONFIG_PERSIST_FILE"
+             ;;
     esac
     shift
   done
 
-export SQETC_DIR=$TRAF_HOME/etc
-export SQLOG_DIR=$TRAF_HOME/logs
-mkdir -p $SQETC_DIR
+export SQLOG_DIR=$TRAF_LOG
+mkdir -p $TRAF_VAR
 mkdir -p $SQLOG_DIR
 mkdir -p $MPI_TMPDIR
+mkdir -p $MPI_TMPDIR/tmp
 # mkdir a dir for CBF data used by SQL IUS feature
 mkdir -p $HOME/cbfs
 
 # Clean HBase classpath cache file
-echo "Clean up HBase classpath cache file: $TRAF_VAR/hbase_classpath"
+#echo "Clean up HBase classpath cache file: $TRAF_VAR/hbase_classpath"
 rm -rf $TRAF_VAR/hbase_classpath
 
-if  [[ -n "$node_count" ]] && [[ "$node_count" -gt "1" ]]; then    
-    echo
-    echo "Creating directories on cluster nodes"
+# Bypass if in agent mode
+if [[ -z ${TRAF_AGENT} ]]; then
+    if  [[ -n "$node_count" ]] && [[ "$node_count" -gt "1" ]]; then    
+        echo
+        echo "Creating directories on cluster nodes"
 
-    # Clean HBase classpath cache file on all nodes
-    $PDSH -w ${ExNodeList[@]} -x `uname -n` $PDSH_SSH_CMD rm -rf $TRAF_VAR/hbase_classpath
+        # Clean HBase classpath cache file on all nodes
+        $PDSH $ExNodeList rm -rf $TRAF_VAR/hbase_classpath
 
-    echo "$PDSH -w ${ExNodeList[@]} -x `uname -n` $PDSH_SSH_CMD mkdir -p $SQETC_DIR "
-    $PDSH -w ${ExNodeList[@]} -x `uname -n` $PDSH_SSH_CMD mkdir -p $SQETC_DIR
+        echo "$ExNodeList mkdir -p $TRAF_VAR "
+        $PDSH $ExNodeList mkdir -p $TRAF_VAR
+        
+        echo "$PDSH $ExNodeList mkdir -p $SQLOG_DIR "
+        $PDSH $ExNodeList mkdir -p $SQLOG_DIR
     
-    echo "$PDSH -w ${ExNodeList[@]} -x `uname -n` $PDSH_SSH_CMD mkdir -p $SQLOG_DIR "
-    $PDSH -w ${ExNodeList[@]} -x `uname -n` $PDSH_SSH_CMD mkdir -p $SQLOG_DIR
+        echo "$PDSH $ExNodeList mkdir -p $MPI_TMPDIR "
+        $PDSH $ExNodeList mkdir -p $MPI_TMPDIR
+    
+        echo "$PDSH $ExNodeList mkdir -p $MPI_TMPDIR/tmp "
+        $PDSH $ExNodeList mkdir -p $MPI_TMPDIR/tmp
 
-    echo "$PDSH -w ${ExNodeList[@]} -x `uname -n` $PDSH_SSH_CMD mkdir -p $MPI_TMPDIR "
-    $PDSH -w ${ExNodeList[@]} -x `uname -n` $PDSH_SSH_CMD mkdir -p $MPI_TMPDIR
-
-    echo "$PDSH -w ${ExNodeList[@]} -x `uname -n` $PDSH_SSH_CMD mkdir -p $PWD "
-    $PDSH -w ${ExNodeList[@]} -x `uname -n` $PDSH_SSH_CMD mkdir -p $PWD
-
+        if [[ -f $TRAF_CONF/ms.env.add ]]; then
+           echo "$PDCP $ExNodeList $TRAF_CONF/ms.env.add  $TRAF_CONF "
+           $PDCP $ExNodeList $TRAF_CONF/ms.env.add $TRAF_CONF
+        fi
+    
+    fi
 fi
 
 SQSCRIPT_FILE=./gomon
-SQESPENV_FILE=$TRAF_HOME/sql/scripts/tdm_arkesp.env
+SQESPENV_FILE=$TRAF_VAR/tdm_arkesp.env
 
-echo
-if [ -f $SQETC_DIR/ms.env ]; then
-    echo "The SQ environment variable file $SQETC_DIR/ms.env exists."
+#echo
+if [ -f $TRAF_VAR/ms.env ]; then
+    echo "The environment variable file $TRAF_VAR/ms.env exists."
     echo "The file will not be re-generated."
     echo
 else
-    echo "Generating SQ environment variable file: $SQETC_DIR/ms.env"
+    echo "Generating environment variable file: $TRAF_VAR/ms.env"
     echo
-    ./genms > $SQETC_DIR/ms.env
+    ./genms > $TRAF_VAR/ms.env
     lv_retcode=$?
     if [[ $lv_retcode != 0 ]]; then 
         echo "Error $lv_retcode while executing genms. Exiting..."
         exit $lv_retcode
     fi
+    if [[ -f $TRAF_CONF/ms.env.add ]]
+    then
+      cat $TRAF_CONF/ms.env.add >> $TRAF_VAR/ms.env
+    fi
 fi
 
-./gensqstatem2lenv > $SQETC_DIR/sqstatem2l.env
+./gensqstatem2lenv > $TRAF_VAR/sqstatem2l.env
 
 # Create configuration database tables
 sqlite3 -init createConfigDb $SQCONFIG_DB_FILE <<eof 
 .quit
 eof
 
-./gensq.pl $SQSCRIPT_FILE `hostname` $FT_FLAG $PERF_FLAG $SQCONFIG_FILE $TRAF_HOME/sql/scripts/sqconfig.persist
+./gensq.pl $SQSCRIPT_FILE `hostname` $FT_FLAG $PERF_FLAG $SQCONFIG_FILE $SQCONFIG_PERSIST_FILE
 sq_stat=$?
 if [[ $sq_stat != 0 ]]; then 
     exit $sq_stat;
 fi
 
+if [[ -f $TRAF_CONF/ms.env.add ]]
+then
+   cat $TRAF_CONF/ms.env.add >> $TRAF_VAR/ms.env
+fi
+
+
 sq_seamonster=$SQ_SEAMONSTER
 if [ -f $SQESPENV_FILE ]; then
     if [[ $sq_seamonster == 1 ]]; then 
         echo
-        echo "Enabling tdm_arkesp.env file in $TRAF_HOME/etc/ms.env"
-        echo "cat $TRAF_HOME/etc/ms.env | sed -e "s@^# SQ_PROPS_TDM_ARKESP=tdm_arkesp.env@SQ_PROPS_TDM_ARKESP=tdm_arkesp.env@" > $TRAF_HOME/etc/ms.env.TEMP"
-        if [ -f $TRAF_HOME/etc/ms.env.TEMP ]; then
-            rm $TRAF_HOME/etc/ms.env.TEMP
-        fi
-        cat $TRAF_HOME/etc/ms.env | sed -e "s@^# SQ_PROPS_TDM_ARKESP=tdm_arkesp.env@SQ_PROPS_TDM_ARKESP=tdm_arkesp.env@" > $TRAF_HOME/etc/ms.env.TEMP
-        cp $TRAF_HOME/etc/ms.env.TEMP $TRAF_HOME/etc/ms.env
-        rm $TRAF_HOME/etc/ms.env.TEMP
+        echo "Enabling tdm_arkesp.env file in $TRAF_VAR/ms.env"
+        sed -i "s@^# SQ_PROPS_TDM_ARKESP=tdm_arkesp.env@SQ_PROPS_TDM_ARKESP=tdm_arkesp.env@" $TRAF_VAR/ms.env
+        sed -i "s@^# SQ_PROPS_TDM_ARKCMP=tdm_arkcmp.env@SQ_PROPS_TDM_ARKCMP=tdm_arkcmp.env@" $TRAF_VAR/ms.env
     else
         echo
-        echo "Disabling tdm_arkesp.env file in $TRAF_HOME/etc/ms.env"
-        echo "cat $TRAF_HOME/etc/ms.env | sed -e "s@^SQ_PROPS_TDM_ARKESP=tdm_arkesp.env@# SQ_PROPS_TDM_ARKESP=tdm_arkesp.env@" > $TRAF_HOME/etc/ms.env.TEMP"
-        if [ -f $TRAF_HOME/etc/ms.env.TEMP ]; then
-            rm $TRAF_HOME/etc/ms.env.TEMP
-        fi
-        cat $TRAF_HOME/etc/ms.env | sed -e "s@^SQ_PROPS_TDM_ARKESP=tdm_arkesp.env@# SQ_PROPS_TDM_ARKESP=tdm_arkesp.env@" > $TRAF_HOME/etc/ms.env.TEMP
-        cp $TRAF_HOME/etc/ms.env.TEMP $TRAF_HOME/etc/ms.env
-        rm $TRAF_HOME/etc/ms.env.TEMP
+        echo "Disabling tdm_arkesp.env file in $TRAF_VAR/ms.env"
+        sed -i "s@^SQ_PROPS_TDM_ARKESP=tdm_arkesp.env@# SQ_PROPS_TDM_ARKESP=tdm_arkesp.env@" $TRAF_VAR/ms.env
+        sed -i "s@^SQ_PROPS_TDM_ARKCMP=tdm_arkcmp.env@# SQ_PROPS_TDM_ARKCMP=tdm_arkcmp.env@" $TRAF_VAR/ms.env
     fi
 fi
 
-if  [[ -n "$node_count" ]] && [[ "$node_count" -gt "1" ]]; then    
-    echo
-    echo
-    echo "Copying the generated files to all the nodes in the cluster"
-    echo
+# Bypass if in agent mode
+if [[ -z ${TRAF_AGENT} ]]; then
+    if  [[ -n "$node_count" ]] && [[ "$node_count" -gt "1" ]]; then    
+        echo
+        echo "Copying $TRAF_VAR/ms.env to $TRAF_VAR to all the nodes"
+        echo "$PDCP $ExNodeList $TRAF_VAR/ms.env   $TRAF_VAR "
+        $PDCP $ExNodeList $TRAF_VAR/ms.env   $TRAF_VAR
 
-    echo
-    echo "Copying $SQETC_DIR/ms.env to $SQETC_DIR of all the nodes"
-    echo "$PDCP -w ${ExNodeList[@]} -x `uname -n` $SQETC_DIR/ms.env   $SQETC_DIR "
-    $PDCP -w ${ExNodeList[@]} -x `uname -n` $SQETC_DIR/ms.env   $SQETC_DIR
+        echo "Copying $SQCONFIG_FILE and $SQCONFIG_PERSIST_FILE to $TRAF_CONF to all the nodes"
+        echo "$PDCP $ExNodeList $SQCONFIG_FILE $SQCONFIG_PERSIST_FILE    $TRAF_CONF "
+        $PDCP $ExNodeList $SQCONFIG_FILE $SQCONFIG_PERSIST_FILE    $TRAF_CONF
 
-    echo
-    echo "Copying $SQETC_DIR/seamonster.env to $SQETC_DIR of all the nodes"
-    echo "$PDCP -w ${ExNodeList[@]} -x `uname -n` $SQETC_DIR/seamonster.env   $SQETC_DIR "
-    $PDCP -w ${ExNodeList[@]} -x `uname -n` $SQETC_DIR/seamonster.env   $SQETC_DIR
-
-    if [[ $sq_seamonster == 1 ]]; then 
-        if [ -f $SQESPENV_FILE ]; then
+        if [[ -f "$TRAF_VAR/seamonster.env" ]]; then
             echo
-            echo "Copying $SQESPENV_FILE to $TRAF_HOME/sql/scripts of all the nodes"
-            echo "$PDCP -w ${ExNodeList[@]} -x `uname -n` $SQESPENV_FILE   $TRAF_HOME/sql/scripts "
-            $PDCP -w ${ExNodeList[@]} -x `uname -n` $SQESPENV_FILE   $TRAF_HOME/sql/scripts
+            echo "Copying $TRAF_VAR/seamonster.env to $TRAF_VAR of all the nodes"
+            echo "$PDCP $ExNodeList $TRAF_VAR/seamonster.env   $TRAF_VAR "
+            $PDCP $ExNodeList $TRAF_VAR/seamonster.env   $TRAF_VAR
         fi
+
+        if [[ $sq_seamonster == 1 ]]; then 
+            if [ -f $SQESPENV_FILE ]; then
+                echo
+                echo "Copying $SQESPENV_FILE to $TRAF_VAR to all the nodes"
+                echo "$PDCP $ExNodeList $SQESPENV_FILE   $TRAF_VAR "
+                $PDCP $ExNodeList $SQESPENV_FILE   $TRAF_VAR
+            fi
+        fi
+
+        echo
+        echo "Copying Trafodion Configuration database file to $TRAF_VAR"
+
+        echo "$PDCP $ExNodeList $SQCONFIG_DB_FILE $TRAF_VAR/ "
+        $PDCP $ExNodeList $SQCONFIG_DB_FILE $TRAF_VAR/
+
+        echo
     fi
-
-    echo
-    echo "Copying rest of the generated files to $PWD"
-
-    echo "$PDCP -w ${ExNodeList[@]} -x `uname -n` sqconfig sqshell gomon.cold rmsstart rmsstop rmscheck.sql ssmpstart ssmpstop sscpstart sscpstop $PWD"
-    $PDCP -w ${ExNodeList[@]} -x `uname -n` sqconfig sqshell gomon.cold rmsstart rmsstop rmscheck.sql ssmpstart ssmpstop sscpstart sscpstop $PWD
-
-    echo "$PDCP -w ${ExNodeList[@]} -x `uname -n` $SQCONFIG_FILE $SQCONFIG_DB_FILE $PWD "
-    $PDCP -w ${ExNodeList[@]} -x `uname -n` $SQCONFIG_FILE $SQCONFIG_DB_FILE $PWD
-
-
-    echo
 fi
 
 # mkdir a dir for CBF data used by SQL IUS feature
@@ -297,13 +329,11 @@ mkdir -p $HOME/cbfs
 echo
 echo "******* Generate public/private certificates *******"
 echo
-# Generate certificates for ODBC, ...
 if (test -f $TRAF_HOME/sql/scripts/sqcertgen); then
-   $TRAF_HOME/sql/scripts/sqcertgen 2>/dev/null
-   echo
+  $TRAF_HOME/sql/scripts/sqcertgen 2>/dev/null
 else
-   echo
-   echo "ERROR: Certificate generation script (sqcertgen) does not exist in $TRAF_HOME/sql/scripts folder"
-   echo
-   exit 1
+  echo
+  echo "ERROR: Certificate generation script (sqcertgen) does not exist in $TRAF_HOME/sql/scripts folder"
+  echo
+  exit 1
 fi

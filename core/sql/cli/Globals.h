@@ -97,7 +97,7 @@ class LmLanguageManager;
 class LmLanguageManagerC;
 class LmLanguageManagerJava;
 extern CliGlobals *cli_globals;
-static __thread ContextTidMap *tsCurrentContextMap = NULL;
+extern __thread ContextTidMap *tsCurrentContextMap;
 static  pthread_key_t thread_key;
 
 // A cleanup function when thread exits
@@ -316,12 +316,6 @@ inline
   NABoolean nodeIdsAreContiguous()
            { return cpuArray_[myNumCpus_-1] == myNumCpus_ - 1; }
 
-  IpcPriority myPriority() { return myPriority_; }
-  void setMyPriority(IpcPriority p) { myPriority_= p; }
-  NABoolean priorityChanged() { return priorityChanged_;}
-  void setPriorityChanged(NABoolean v) { priorityChanged_ = v; }
-  IpcPriority myCurrentPriority();
-
   Int64 getNextUniqueNumber()
   { return ++lastUniqueNumber_; }
 
@@ -342,8 +336,6 @@ inline
   void setSavedSqlTerminateAction(short val) { savedSqlTerminateAction_ = val; }
   short getSavedSqlTerminateAction() { return savedSqlTerminateAction_; }
 
-  void setSavedPriority(short val) { savedPriority_ = val; }
-  short getSavedPriority() { return savedPriority_; }
   ExSsmpManager *getSsmpManager();
   NABoolean getIsBeingInitialized() { return inConstructor_; }
 
@@ -374,6 +366,11 @@ inline
   ULng32 unusedMemoryQuota();
   void yieldMemoryQuota(ULng32 size);
   NABoolean isEspProcess() { return espProcess_; }
+
+  void setHbaseClient(HBaseClient_JNI *hbaseClientJNI)
+     { hbaseClientJNI_ = hbaseClientJNI; }
+  HBaseClient_JNI *getHBaseClient() { return hbaseClientJNI_; }
+
 private:
   enum {
     DEFAULT_CONTEXT_HANDLE = 2000
@@ -470,9 +467,6 @@ private:
   Lng32 myNumCpus_;
   Int32 *cpuArray_;
 
-  IpcPriority myPriority_;
-  NABoolean priorityChanged_;
-
   // timestamp when cli globals were initialized. Start of master executor.
   Int64 myStartTime_;
 
@@ -496,7 +490,6 @@ private:
   NABoolean inConstructor_; //IsExecutor should return TRUE while cliGlobals is being
                             // constructed. CliGlobals is constructed outside of CLI
                             // calls and no. of cliCalls is not yet incremented
-  short savedPriority_;
   Int32 shmId_;
   NABoolean isUncProcess_;
   char myProcessNameString_[PROCESSNAME_STRING_LEN]; // PROCESSNAME_STRING_LEN in ComRtUtils.h =40 in ms.h the equiv seabed limit is 32
@@ -510,6 +503,7 @@ private:
   LmLanguageManagerC *langManC_;
   LmLanguageManagerJava *langManJava_;
   NABoolean espProcess_;
+  HBaseClient_JNI *hbaseClientJNI_;
 };
 
 // -----------------------------------------------------------------------

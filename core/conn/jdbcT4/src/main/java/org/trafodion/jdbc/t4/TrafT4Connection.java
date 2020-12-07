@@ -53,7 +53,7 @@ import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
-
+import java.util.HashMap;
 import javax.sql.PooledConnection;
 
 /**
@@ -258,35 +258,16 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 		return ic_.getCatalog();
 	}
 
-	public String getSchema() throws SQLException {
-		if (props_.t4Logger_.isLoggable(Level.FINE) == true) {
-			Object p[] = T4LoggingUtilities.makeParams(props_);
-			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "getSchema", "", p);
-		}
-		
-		Statement s = null;
-		ResultSet rs = null;
-		String sch = null;
-		
-		try {
-			s = this.createStatement();
-			rs = s.executeQuery("SHOWCONTROL DEFAULT SCHEMA, match full, no header");
-			rs.next();
-			sch = rs.getString(1);
-			if(sch.charAt(0) != '\"' && sch.indexOf('.') != -1) {
-				sch = sch.substring(sch.indexOf('.') + 1);
-			}
-		}catch(SQLException e) {
-			sch = ic_.getSchema();
-		}finally {
-			if(rs != null)
-				rs.close();
-			if(s != null)
-				s.close();
-		}
-		
-		return sch;
-	}
+    public String getSchema() throws SQLException {
+        if (props_.t4Logger_.isLoggable(Level.FINE) == true) {
+            Object p[] = T4LoggingUtilities.makeParams(props_);
+            props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "getSchema", "", p);
+        }
+
+        validateConnection();
+
+        return ic_.getSchema();
+    }
 
 	public int getHoldability() throws SQLException {
 		if (props_.t4Logger_.isLoggable(Level.FINE) == true) {
@@ -341,7 +322,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "isClosed", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			lr.setParameters(p);
@@ -365,7 +346,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "isClosed", "At exit return = " + rv, p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			lr.setParameters(p);
@@ -389,7 +370,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "_isClosed", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_ != null && props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			lr.setParameters(p);
@@ -411,7 +392,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "_isClosed", "At exit return = " + rv, p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_ != null && props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			lr.setParameters(p);
@@ -466,7 +447,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "prepareCall", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql);
 			lr.setParameters(p);
@@ -515,7 +496,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "prepareCall", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql);
 			lr.setParameters(p);
@@ -580,7 +561,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql, resultSetType, resultSetConcurrency);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "prepaseCall", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql, resultSetType, resultSetConcurrency);
 			lr.setParameters(p);
@@ -626,7 +607,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 					resultSetHoldability);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "prepareCall", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql, resultSetType, resultSetHoldability);
 			lr.setParameters(p);
@@ -687,7 +668,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "prepareStatement", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql);
 			lr.setParameters(p);
@@ -748,7 +729,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "prepareStatement", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql);
 			lr.setParameters(p);
@@ -796,7 +777,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "prepareLobStatement", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql);
 			lr.setParameters(p);
@@ -830,7 +811,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql, autoGeneratedKeys);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "prepareStatement", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql, autoGeneratedKeys);
 			lr.setParameters(p);
@@ -853,7 +834,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql, columnIndexes);
 			props_.t4Logger_.logp(Level.FINE, "SQLConnection", "prepareStatement", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql, columnIndexes);
 			lr.setParameters(p);
@@ -877,7 +858,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql, resultSetType, resultSetConcurrency);
 			props_.t4Logger_.logp(Level.FINE, "SQLConnection", "prepareStatement", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql, resultSetType, resultSetConcurrency);
 			lr.setParameters(p);
@@ -924,7 +905,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 					resultSetHoldability);
 			props_.t4Logger_.logp(Level.FINE, "SQLConnection", "prepareStatement", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql, resultSetType, resultSetHoldability);
 			lr.setParameters(p);
@@ -968,7 +949,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql, columnNames);
 			props_.t4Logger_.logp(Level.FINE, "SQLConnection", "prepareStatement", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, sql, columnNames);
 			lr.setParameters(p);
@@ -990,7 +971,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, savepoint);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "releaseSavepoint", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, savepoint);
 			lr.setParameters(p);
@@ -1009,7 +990,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "rollback", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			lr.setParameters(p);
@@ -1042,7 +1023,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, savepoint);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "rollback", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, savepoint);
 			lr.setParameters(p);
@@ -1061,7 +1042,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, autoCommit);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "setAutoCommit", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, autoCommit);
 			lr.setParameters(p);
@@ -1089,7 +1070,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, catalog);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "setCalalog", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, catalog);
 			lr.setParameters(p);
@@ -1118,7 +1099,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, holdability);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "setHoldability", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, holdability);
 			lr.setParameters(p);
@@ -1146,7 +1127,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, readOnly);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "setReadOnly", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, readOnly);
 			lr.setParameters(p);
@@ -1190,7 +1171,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, name);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "setSavepoint", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, name);
 			lr.setParameters(p);
@@ -1210,7 +1191,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "setSavepoint", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			lr.setParameters(p);
@@ -1230,7 +1211,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, level);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "setTransactionIsolation", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, level);
 			lr.setParameters(p);
@@ -1258,7 +1239,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, map);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "setTypeMap", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, map);
 			lr.setParameters(p);
@@ -1277,7 +1258,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "begintransaction", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			lr.setParameters(p);
@@ -1309,7 +1290,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "getTxid", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			lr.setParameters(p);
@@ -1351,9 +1332,9 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 
 		while ((pRef = refStmtQ_.poll()) != null) {
 			stmtLabel = (String) refToStmt_.get(pRef);
-			// All PreparedStatement objects are added to Hashtable
+			// All PreparedStatement objects are added to HashMap
 			// Only Statement objects that produces ResultSet are added to
-			// Hashtable
+			// HashMap
 			// Hence stmtLabel could be null
 			if (stmtLabel != null) {
 				try {
@@ -1417,7 +1398,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 		}
 		// Rollback the Transaction when autoCommit mode is OFF
 		try {
-			if (getAutoCommit() == false || isBeginTransaction) {
+			if (getAutoCommit() == false ) {    
 				rollback();
 			}
 		} catch (SQLException sqex) {
@@ -1525,7 +1506,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "getPooledConnection", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			lr.setParameters(p);
@@ -1552,7 +1533,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, ds, t4props);
 			t4props.t4Logger_.logp(Level.FINE, "TrafT4Connection", "<init>", "", p);
 		}
-		if (t4props.getLogWriter() != null) {
+		if ( t4props.t4Logger_.isLoggable(Level.FINE) && t4props.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, ds, t4props);
 			lr.setParameters(p);
@@ -1579,7 +1560,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_, poolConn, t4props);
 			t4props.t4Logger_.logp(Level.FINE, "TrafT4Connection", "<init>", "", p);
 		}
-		if (t4props.getLogWriter() != null) {
+		if ( t4props.t4Logger_.isLoggable(Level.FINE) && t4props.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_, poolConn, t4props);
 			lr.setParameters(p);
@@ -1638,7 +1619,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 		}
 		
 		refStmtQ_ = new ReferenceQueue();
-		refToStmt_ = new Hashtable();
+		refToStmt_ = new HashMap();
 		pRef_ = new WeakReference(this, ic_.refQ_);
 		ic_.refTosrvrCtxHandle_.put(pRef_, ic_);
 		props_ = t4props;
@@ -1736,7 +1717,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "getDialogueId", "", p);
 		}
-		if (props_.getLogWriter() != null) {
+		if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
 			LogRecord lr = new LogRecord(Level.FINE, "");
 			Object p[] = T4LoggingUtilities.makeParams(props_);
 			lr.setParameters(p);
@@ -1793,37 +1774,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 
 	boolean erroredConnection = false;
 
-	PreparedStatement[] LobPreparedStatements = new PreparedStatement[14];
-
-	// boolean reserveEmptyDataLocator_ = false;
-	// public static final int EMPTY_DATA_LOCATOR_UPDATE = 0;
-
-	String clobTableName_;
-	String blobTableName_;
-	// String preparedClobTableName_;
-	// String preparedBlobTableName_;
-
-	static final int CLOB_INS_LOB_DATA_STMT = 0;
-	static final int CLOB_GET_LOB_DATA_STMT = 1;
-	static final int CLOB_GET_LOB_LEN_STMT = 2;
-	static final int CLOB_DEL_LOB_DATA_STMT = 3;
-	static final int CLOB_TRUN_LOB_DATA_STMT = 4;
-	static final int CLOB_UPD_LOB_DATA_STMT = 5;
-	static final int CLOB_GET_STRT_DATA_LOC_STMT = 6;
-	static final int BLOB_INS_LOB_DATA_STMT = 7;
-	static final int BLOB_GET_LOB_DATA_STMT = 8;
-	static final int BLOB_GET_LOB_LEN_STMT = 9;
-	static final int BLOB_DEL_LOB_DATA_STMT = 10;
-	static final int BLOB_TRUN_LOB_DATA_STMT = 11;
-	static final int BLOB_UPD_LOB_DATA_STMT = 12;
-	static final int BLOB_GET_STRT_DATA_LOC_STMT = 13;
-
 	static Logger dummyLogger_ = null;
-
-	boolean[] bLobStatementPrepared = new boolean[14]; // initialized to false,
-	// one each for the
-	// BLOB/CLOB statements
-	// listed above
 
 	// Fields
 	InterfaceConnection ic_;
@@ -1831,8 +1782,7 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 	// Connection
 	Map userMap_;
 	ReferenceQueue refStmtQ_;
-	Hashtable refToStmt_;
-	Hashtable refToRS_;
+	HashMap refToStmt_;
 	int holdability_;
 	TrafT4DataSource ds_;
 	TrafT4PooledConnection pc_;
@@ -1842,16 +1792,6 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 
 	byte[] transactionToJoin;
 	
-	private boolean isBeginTransaction = false;
-	
-	protected boolean isBeginTransaction() {
-		return isBeginTransaction;
-	}
-
-	protected void setBeginTransaction(boolean isBeginTransaction) {
-		this.isBeginTransaction = isBeginTransaction;
-	}
-
 
 	public Object unwrap(Class iface) throws SQLException {
 		try {
@@ -1922,73 +1862,52 @@ public class TrafT4Connection extends PreparedStatementManager implements java.s
 		return null;
 	}
 
-	public void setSchema(String schema) throws SQLException {
-            if (props_.t4Logger_.isLoggable(Level.FINE) == true) {
-                Object p[] = T4LoggingUtilities.makeParams(props_, schema);
-                props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "setSchema", "", p);
+    public void setSchema(String schema) throws SQLException {
+        if (props_.t4Logger_.isLoggable(Level.FINE) == true) {
+            Object p[] = T4LoggingUtilities.makeParams(props_, schema);
+            props_.t4Logger_.logp(Level.FINE, "TrafT4Connection", "setSchema", "", p);
+        }
+        if ( props_.t4Logger_.isLoggable(Level.FINE) && props_.getLogWriter() != null ) {
+            LogRecord lr = new LogRecord(Level.FINE, "");
+            Object p[] = T4LoggingUtilities.makeParams(props_, schema);
+            lr.setParameters(p);
+            lr.setSourceClassName("TrafT4Connection");
+            lr.setSourceMethodName("setSchema");
+            T4LogFormatter lf = new T4LogFormatter();
+            String temp = lf.format(lr);
+            props_.getLogWriter().println(temp);
+        }
+        clearWarnings();
+        if (_isClosed() == true) {
+            throw TrafT4Messages.createSQLException(props_, null, "invalid_connection", null);
+        }
+        if (schema != null) {
+            try {
+                ic_.setSchema(this, schema);
+            } catch (TrafT4Exception se) {
+                performConnectionErrorChecks(se);
+                throw se;
             }
-            if (props_.getLogWriter() != null) {
-                LogRecord lr = new LogRecord(Level.FINE, "");
-                Object p[] = T4LoggingUtilities.makeParams(props_, schema);
-                lr.setParameters(p);
-                lr.setSourceClassName("TrafT4Connection");
-                lr.setSourceMethodName("setSchema");
-                T4LogFormatter lf = new T4LogFormatter();
-                String temp = lf.format(lr);
-                props_.getLogWriter().println(temp);
-            }
-            clearWarnings();
-            if (_isClosed() == true) {
-                throw TrafT4Messages.createSQLException(props_, null, "invalid_connection", null);
-            }
-            if (schema != null && !"".equals(schema)) {
-                Statement stmt = null;
-                try {
-                    stmt = createStatement();
-                    stmt.execute("set schema " + schema);
-                } catch (TrafT4Exception se) {
-                    performConnectionErrorChecks(se);
-                    throw se;
-                } finally {
-                    if (stmt != null) {
-                        try {
-                            stmt.close();
-                        } catch (Exception e) {
-                            if (props_.getLogWriter() != null) {
-                                LogRecord lr = new LogRecord(Level.WARNING, "");
-                                Object p[] = T4LoggingUtilities.makeParams(props_, e.getMessage());
-                                lr.setParameters(p);
-                                lr.setSourceClassName("TrafT4Connection");
-                                lr.setSourceMethodName("setSchema");
-                                T4LogFormatter lf = new T4LogFormatter();
-                                String temp = lf.format(lr);
-                                props_.getLogWriter().println(temp);
-                            }
-                        }
-                    }
-                }
-            }
-
-	}
+        }
+    }
 
 	public void abort(Executor executor) throws SQLException {
 		if (ic_.getT4Connection().getInputOutput() != null) {
-			ic_.getT4Connection().getInputOutput().CloseIO(null);
+			ic_.getT4Connection().getInputOutput().closeIO();
 		}
 		ic_.setIsClosed(true);
-		
 	}
 
 	public void setNetworkTimeout(Executor executor, int milliseconds)
 			throws SQLException {
             validateConnection();
-            props_.setNetworkTimeout(milliseconds);
+            props_.setNetworkTimeoutInMillis(milliseconds);
 	}
 	
 
 	public int getNetworkTimeout() throws SQLException {
 		validateConnection();
-		return props_.getNetworkTimeout();
+		return props_.getNetworkTimeoutInMillis();
 	}
 
 	/*

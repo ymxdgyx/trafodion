@@ -100,22 +100,6 @@ inline void ExSqlComp::initRequests(Requests& req)
   req.ioStatus_ = INIT;
 }
 
-ExSqlComp::ReturnStatus ExSqlComp::changePriority(IpcPriority priority,
-						  NABoolean isDelta)
-{
-  ReturnStatus ret = SUCCESS;
-  if (! server_)
-    return ret;
-
-  short rc = server_->castToIpcGuardianServer()->changePriority(priority, isDelta);
-  if (rc != 0)
-    {
-      ret = ERROR;
-    }
-
-  return ret;
-}
-
 ExSqlComp::ReturnStatus ExSqlComp::createServer() 
 {
   ReturnStatus ret = SUCCESS;
@@ -136,27 +120,9 @@ ExSqlComp::ReturnStatus ExSqlComp::createServer()
     }
   else
     {
-      IpcPriority priority = IPC_PRIORITY_DONT_CARE;
-      
-      if (cliGlobals_->currContext()->getSessionDefaults()->getMxcmpPriority() > 0)
-	priority = cliGlobals_->currContext()->getSessionDefaults()->
-	  getMxcmpPriority();
-      else if (cliGlobals_->currContext()->getSessionDefaults()->
-	       getMxcmpPriorityDelta() != 0)
-	priority = 
-	  //	  env_->getMyProcessPriority() + 
-	  cliGlobals_->myPriority() + 
-	  cliGlobals_->currContext()->getSessionDefaults()->
-	  getMxcmpPriorityDelta();
-      if ((priority > 200) ||
-	  (priority < 1))
-	
-	priority = IPC_PRIORITY_DONT_CARE;
-	
       ComDiagsArea* diags = 0;
       if ( !( server_ = sc_->allocateServerProcess(&diags, h_,nodeName_,
-						   IPC_CPU_DONT_CARE,
-						   priority,
+                                                   IPC_CPU_DONT_CARE,
 						   1, TRUE, TRUE, 2, NULL, NULL, FALSE, NULL
 						   ) ) )
 	ret = ERROR;
@@ -172,7 +138,8 @@ ExSqlComp::ReturnStatus ExSqlComp::createServer()
   //  
   if (ret == ERROR)
   {
-	error(arkcmpErrorServer);
+	if ((!diagArea_->contains(-2013)) && (!diagArea_->contains(-2012))) // avoid generating redundant error
+	  error(arkcmpErrorServer);
 	if (getenv("DEBUG_SERVER"))
 	  MessageBox(NULL, "ExSqlComp:createServer", "error ", MB_OK|MB_ICONINFORMATION);
   }
@@ -911,7 +878,7 @@ ExSqlComp::ExSqlComp(void* ex_environment,
                      short version,
                      char *nodeName ,
                      IpcEnvironment *env):
-isShared_(FALSE), lastContext_(NULL), resendingControls_(FALSE)
+isShared_(FALSE), lastContext_(NULL), resendingControls_(FALSE), nodeName_(NULL)
 {
   h_ = h;
 
@@ -930,17 +897,11 @@ isShared_(FALSE), lastContext_(NULL), resendingControls_(FALSE)
   breakReceived_ = FALSE;
   currentISPRequest_ = 0;
   connectionType_ = CmpMessageConnectionType::DMLDDL;
-  nodeName_ = new (h_) char[9];
   if (nodeName)
    {
+     nodeName_ = new (h_) char[strlen(nodeName)+1];
      strcpy(nodeName_,nodeName);
    }
-  else
-    {
-      nodeName_[0] = '\\';
-      if (ComRtGetOSClusterName(&nodeName_[1], 8, NULL) <= 0)
-	nodeName_ = nodeName;
-    }
   server_ = 0;
 
   diagArea_ = ComDiagsArea::allocate(h_);  

@@ -93,7 +93,6 @@ TMOBJS		= $(OUTDIR)/tmregistry.o \
 		      $(OUTDIR)/tmmap.o \
 		      $(OUTDIR)/tmmutex.o \
 		      $(OUTDIR)/tmdeque.o \
-		      $(OUTDIR)/tmsync.o \
 		      $(OUTDIR)/tmtxkey.o \
 		      $(OUTDIR)/tmrecovstate.o \
 		      $(OUTDIR)/tmpoolelement.o \
@@ -126,6 +125,13 @@ TMOBJS		= $(OUTDIR)/tmregistry.o \
 		      $(OUTDIR)/tmxarmmain.o \
 		      $(OUTDIR)/tm.o \
 		      $(OUTDIR)/CommonLogger.o  
+
+ifeq ($(SUPPORT_TM_SYNC),1)
+DEFINES         += -DSUPPORT_TM_SYNC
+TMOBJS          += $(OUTDIR)/tmsync.o
+endif
+
+
 IDSRVOBJS	= $(OUTDIR)/idtmsrv.o \
 		      $(OUTDIR)/versidtmsrv.o
 ALLOBJS	= $(LIBSTMOBJS) \
@@ -143,7 +149,7 @@ endif
 all:  $(LIBEXPDIR)/libstmlib.so cp_trx_jar
 
 cp_trx_jar:
-	cd $(HBASE_TRX_LOC); make
+	cd $(HBASE_TRX_LOC); make all
 
 all:  $(LIBEXPDIR)/libsxatmlib.so $(LIBEXPDIR)/libstmlib.so $(PROGS) $(LIBEXPDIR)/libxarm.so
 	cd tools; $(MAKE)

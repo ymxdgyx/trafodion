@@ -34,6 +34,7 @@
 #include "ExHdfsScan.h"
 #include "Context.h"
 #include "HdfsClient_JNI.h"
+#include "ExStats.h"
 
 ExHbaseAccessInsertTcb::ExHbaseAccessInsertTcb(
           const ExHbaseAccessTdb &hbaseAccessTdb, 
@@ -1012,8 +1013,7 @@ ExWorkProcRetcode ExHbaseAccessUpsertVsbbSQTcb::work()
               break;
 	    }
 	    if (getHbaseAccessStats()) {
-              getHbaseAccessStats()->lobStats()->numReadReqs++;
-              getHbaseAccessStats()->incUsedRows(numRowsInVsbbBuffer_);
+              getHbaseAccessStats()->incUsedRows((Int64)numRowsInVsbbBuffer_);
 	    }
             rowsInserted_ += numRowsInVsbbBuffer_; 
             if (asyncOperation_) {
@@ -1611,7 +1611,6 @@ ExWorkProcRetcode ExHbaseAccessBulkLoadPrepSQTcb::work()
 
         if (getHbaseAccessStats())
         {
-          getHbaseAccessStats()->lobStats()->numReadReqs++;
           getHbaseAccessStats()->incUsedRows(numRowsInVsbbBuffer_);
         }
 
@@ -2906,6 +2905,11 @@ ExWorkProcRetcode ExHbaseUMDtrafSubsetTaskTcb::work(short &rc)
 
 	case SCAN_OPEN:
 	  {
+            // Bypass scan when beginRowId_ is less than endRowId_
+            if (tcb_->compareRowIds() < 0) {
+               step_ = DONE;
+               break;
+            }
             // Pre-fetch is disabled because it interfers with
             // Delete operations
 	    retcode = tcb_->ehi_->scanOpen(tcb_->table_, 
@@ -3324,6 +3328,11 @@ ExWorkProcRetcode ExHbaseUMDnativeSubsetTaskTcb::work(short &rc)
 	    // this row cannot be deleted.
 	    // But if there is a scan expr, then we need to also retrieve the columns used
 	    // in the pred. Add those.
+            // Bypass scan when beginRowId_ is less than endRowId_
+            if (tcb_->compareRowIds() < 0) {
+               step_ = DONE;
+               break;
+            }
 	    LIST(HbaseStr) columns(tcb_->getHeap());
 	    if (tcb_->hbaseAccessTdb().getAccessType() == ComTdbHbaseAccess::DELETE_)
 	      {
@@ -4247,7 +4256,6 @@ ExWorkProcRetcode ExHbaseAccessSQRowsetTcb::work()
                break;
             }
             if (getHbaseAccessStats()) {
-	      getHbaseAccessStats()->lobStats()->numReadReqs++;
 	      getHbaseAccessStats()->incUsedRows(numRowsInVsbbBuffer_);
 	    }
 	    step_ = RS_CLOSE;
@@ -4271,10 +4279,6 @@ ExWorkProcRetcode ExHbaseAccessSQRowsetTcb::work()
 	      }
               step_ = NEXT_ROW;
 
-	      if (getHbaseAccessStats())
-	      {
-	          getHbaseAccessStats()->lobStats()->numReadReqs++;
-	      }
            }
            else
                step_ = SETUP_SELECT;
@@ -4345,7 +4349,6 @@ ExWorkProcRetcode ExHbaseAccessSQRowsetTcb::work()
                break;
             }
             if (getHbaseAccessStats()) {
-	      getHbaseAccessStats()->lobStats()->numReadReqs++;
 	      getHbaseAccessStats()->incUsedRows(numRowsInVsbbBuffer_);
 	    }
 	    step_ = RS_CLOSE;
@@ -4385,7 +4388,6 @@ ExWorkProcRetcode ExHbaseAccessSQRowsetTcb::work()
             if (step_ == HANDLE_ERROR)
                break;
             if (getHbaseAccessStats()) {
-	      getHbaseAccessStats()->lobStats()->numReadReqs++;
 	      getHbaseAccessStats()->incUsedRows(numRowsInVsbbBuffer_);
             }
             step_ = RS_CLOSE;

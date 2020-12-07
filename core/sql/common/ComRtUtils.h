@@ -155,7 +155,26 @@ Lng32 ComRtGetMPSysCatName(
 // -----------------------------------------------------------------------
 NABoolean ComRtIsNSKName(char *name);
 
-Int64 ComRtGetJulianFromUTC(timespec ts);
+// -----------------------------------------------------------------------
+//
+// ComRtGetJulianFromUTC()
+//
+// This function converts a unix-epoch timespec, which is based on midnight
+// GMT, the morning of Jan 1, 1970 to a JulianTimestamp, which is based on
+// noon GMT, the day of Jan 1, 4713 B.C.  The constant 2440588 represents
+// the number of whole days between these two dates.  The constant 86400 is
+// the number of seconds per day.  The 43200 is number of seconds in a half
+// day and is subtracted to account for the JulianDate starting at noon.
+// The 1000000 constant converts seconds to microseconds, and the 1000 is
+// to convert the nanosecond part of the unix timespec to microseconds. The
+// JulianTimesamp returned is in microseconds so it can be used directly
+// with the Guardian INTERPRETTIMESTAMP function.
+inline Int64 ComRtGetJulianFromUTC(timespec ts)
+{
+  return (((ts.tv_sec  + (2440588LL * 86400LL) - 43200LL) * 1000000LL)
+                + (ts.tv_nsec / 1000)) ;
+}
+
 // -----------------------------------------------------------------------
 //
 // ComRtGetProgramInfo()
@@ -186,12 +205,6 @@ Lng32 ComRtGetProgramInfo(char * pathName,    /* out */
 			  char *parentProcessNameString = NULL
                          , SB_Verif_Type *verifier = NULL
 			 );
-
-// OUT: processPriority: current priority of process
-Lng32 ComRtGetProcessPriority(Lng32  &processPriority /* out */);
-
-Lng32 ComRtSetProcessPriority(Lng32 priority,
-			     NABoolean isDelta);
 
 // OUT: pagesInUse: Pages(16k) currently in use by process
 Lng32 ComRtGetProcessPagesInUse(Int64  &pagesInUse /* out */);
@@ -286,6 +299,8 @@ void dumpTrafStack(LIST(TrafAddrStack *) *la, const char *header, bool toFile = 
 
 Int16 getBDRClusterName(char *bdrClusterName);
 
-SB_Phandle_Type *get_phandle_with_retry(char *pname, short *fserr = NULL);
+int get_phandle_with_retry(char *pname, SB_Phandle_Type *phandle);
+
+pid_t ComRtGetConfiguredPidMax();
 
 #endif // COMRTUTILS_H

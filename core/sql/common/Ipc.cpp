@@ -368,6 +368,14 @@ IpcCpuNum IpcProcessId::getCpuNum() const
     }
 }
 
+std::string IpcProcessId::toString() const
+{
+  char outb[100];
+
+  toAscii(outb, sizeof(outb));
+  return outb;
+}
+
 Int32 IpcProcessId::toAscii(char *outBuf, Int32 outBufLen) const
 {
   // process names shouldn't be longer than 300 bytes
@@ -598,7 +606,7 @@ void IpcServer::logEspRelease(const char * filename, int lineNum,
   {
     /*
     Coverage notes: to test this code in a dev regression requires
-    changing $TRAF_HOME/etc/ms.env.  However, it was tested in
+    changing $TRAF_VAR/ms.env.  However, it was tested in
     stress test on May 10, 2012.
     */
     char logMsg[500];
@@ -836,11 +844,6 @@ GuaMsgConnectionToServer *IpcConnection::castToGuaMsgConnectionToServer()
 }
 
 GuaConnectionToClient *IpcConnection::castToGuaConnectionToClient()
-{
-  return NULL;
-}
-
-SqlTableConnection *IpcConnection::castToSqlTableConnection()
 {
   return NULL;
 }
@@ -1143,6 +1146,52 @@ void IpcConnection::reportBadMessage()
 //  Methods for class IpcAllConnections
 // -----------------------------------------------------------------------
 
+
+// wait for something to happen on any of the connections like awaitio(-1)
+WaitReturnStatus IpcAllConnections::waitOnAll(
+     IpcTimeout timeout,
+     NABoolean calledByESP,
+     NABoolean *timedout,
+     Int64 *waitTime)
+{
+  WaitReturnStatus retcode;
+  struct timespec startts;
+  struct timespec endts;
+  clock_gettime(CLOCK_MONOTONIC, &startts);
+
+  if (timeout != IpcImmediately && timeout != IpcInfiniteTimeout) {
+     short mask;
+     if (ipcEnv_->getControlConnection() != NULL && (! GetCliGlobals()->isEspProcess())) {
+        mask = XWAIT(LREQ | LDONE, timeout);
+        if (mask & LREQ) 
+           retcode = ipcEnv_->getControlConnection()->castToGuaReceiveControlConnection()->wait(IpcImmediately);
+        else if (mask & LDONE)
+           retcode = pendingIOs_->waitOnSet(IpcImmediately, calledByESP, timedout); 
+        if (timedout != NULL) {
+           if (mask != 0)
+              *timedout = FALSE;
+           else
+              *timedout = TRUE;
+        }
+     }
+     else
+        retcode = pendingIOs_->waitOnSet(timeout, calledByESP, timedout); 
+  }
+  else
+     retcode = pendingIOs_->waitOnSet(timeout, calledByESP, timedout); 
+  clock_gettime(CLOCK_MONOTONIC, &endts);
+  if (startts.tv_nsec > endts.tv_nsec)
+    {
+      // borrow 1 from tv_sec, convert to nanosec and add to tv_nsec.
+      endts.tv_nsec += 1 * 1000 * 1000 * 1000;
+      endts.tv_sec -= 1;
+    }
+  if (waitTime != NULL) 
+    *waitTime = ((endts.tv_sec - startts.tv_sec) * 1000LL * 1000LL * 1000LL)
+      +  (endts.tv_nsec - startts.tv_nsec);
+  return retcode;
+}
+
 #ifdef IPC_INTEGRITY_CHECKING
 
 void IpcAllConnections::checkIntegrity(void)
@@ -1188,22 +1237,6 @@ void IpcAllConnections::checkLocalIntegrity(void)
   }
 
 #endif
-
-void IpcAllConnections::waitForAllSqlTableConnections(Int64 transid)
-{
-  // wait for SqlTableConnections (with matched transid) to complete.
-
-  IpcSetOfConnections x = getPendingIOs();
-
-  for (CollIndex i = 0; x.setToNext(i); i++)
-    {
-      if (x.element(i)->castToSqlTableConnection())
-	{
-	  if (x.element(i)->getSqlTableTransid() == transid)
-	    x.element(i)->wait(IpcInfiniteTimeout);
-	}
-    }
-}
 
 CollIndex IpcAllConnections::fillInListOfPendingPins(char *buff,
                                                      ULng32 buffSize,
@@ -1616,7 +1649,7 @@ WaitReturnStatus IpcSetOfConnections::waitOnSet(IpcTimeout timeout,
                             /*
                             Coverage notes: to test this code in a dev 
                             regression requires changing 
-                            $TRAF_HOME/etc/ms.env.  However, it was 
+                            $TRAF_VAR/ms.env.  However, it was 
                             tested in stress test on 
                             May 10, 2012.
                             */
@@ -4598,7 +4631,6 @@ IpcServer * IpcServerClass::allocateServerProcess(ComDiagsArea **diags,
 						  CollHeap   *diagsHeap,
 						  const char *nodeName,
 						  IpcCpuNum cpuNum,
-						  IpcPriority priority,
 						  Lng32 espLevel,
 						  NABoolean usesTransactions,
 						  NABoolean waitedCreation,
@@ -4836,7 +4868,6 @@ IpcServer * IpcServerClass::allocateServerProcess(ComDiagsArea **diags,
 	       nodeName,
 	       className,
 	       cpuNum,
-	       priority, //IPC_PRIORITY_DONT_CARE,
 	       allocationMethod_,
 	       (short) allocatedServers_.entries(),
 	       lv_usesTransactions,
@@ -4926,9 +4957,9 @@ void IpcServerClass::freeServerProcess(IpcServer *s)
   NADELETE(s, IpcServer, environment_->getHeap());
 }
 
-char *IpcServerClass::getProcessName(const char *nodeName, short nodeNameLen, short cpuNum, char *processName)
+char *IpcServerClass::getProcessName(short cpuNum, char *processName)
 {
-  return getServerProcessName(serverType_, nodeName, nodeNameLen, cpuNum, processName);
+  return getServerProcessName(serverType_, cpuNum, processName);
 }
 // -----------------------------------------------------------------------
 // methods for class IpcEnvironment
@@ -4997,7 +5028,7 @@ short getDefineShort( char * defineName )
   if (heap_ == NULL)
     heap_ = new DefaultIpcHeap; // here it's ok to use global operator new
   
-  allConnections_ = new(heap_) IpcAllConnections(heap_, 
+  allConnections_ = new(heap_) IpcAllConnections(this, heap_, 
     (serverType == IPC_SQLESP_SERVER
      || serverType == IPC_SQLSSCP_SERVER
      || serverType == IPC_SQLSSMP_SERVER));
@@ -5279,14 +5310,6 @@ IpcProcessId IpcEnvironment::getMyOwnProcessId(IpcNetworkDomain dom)
     }
   // make the compiler happy
   return IpcProcessId();
-}
-
-IpcPriority IpcEnvironment::getMyProcessPriority()
-{
-  IpcPriority priority;
-  priority = -1;
-
-  return priority;
 }
 
 void IpcEnvironment::setEnvVars(char ** envvars)
@@ -5574,50 +5597,13 @@ void * operator new[](size_t size, IpcEnvironment *env)
   return env->getHeap()->allocateMemory(size);
 }
 
-char *getServerProcessName(IpcServerType serverType, const char *nodeName, short nodeNameLen, 
+char *getServerProcessName(IpcServerType serverType,
                            short cpuNum, char *processName, short *envType)
 {
-  const char *overridingDefineName = NULL;
-  char *processPrefixFromEnvvar = NULL;
   const char *processPrefix = NULL;
   char serverNodeName[MAX_SEGMENT_NAME_LEN+1];
   short len;
 
-  switch (serverType)
-  {
-    case IPC_SQLSSCP_SERVER:
-      overridingDefineName = "=_MX_SSCP_PROCESS_PREFIX"; 
-      break;
-    case IPC_SQLSSMP_SERVER:
-      overridingDefineName = "=_MX_SSMP_PROCESS_PREFIX";
-      break;
-    case IPC_SQLQMS_SERVER:
-      overridingDefineName = "=_MX_QMS_PROCESS_PREFIX";
-      break;
-    case IPC_SQLQMP_SERVER:
-      overridingDefineName = "=_MX_QMP_PROCESS_PREFIX";
-      break;
-    case IPC_SQLQMM_SERVER:
-      overridingDefineName = "=_MX_QMM_PROCESS_PREFIX";
-      break;
-    default:
-      return NULL;
-  }
-  
-  if (overridingDefineName)
-  {
-        processPrefixFromEnvvar = 
-	  getenv((overridingDefineName[0] == '=') 
-	         ? &overridingDefineName[1]
-	         : overridingDefineName);
-   }
- 
-    if (processPrefixFromEnvvar != NULL)
-    { 
-      if (processPrefixFromEnvvar[0] != '$' || str_len(processPrefixFromEnvvar) > 4) 
-        return NULL;
-      processPrefix = processPrefixFromEnvvar;
-    }  
    if (processPrefix == NULL)
    {
        switch (serverType)

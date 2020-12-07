@@ -51,6 +51,7 @@
 #include "PortProcessCalls.h"
 #include "seabed/ms.h"
 #include "seabed/fs.h"
+#include "seabed/pctl.h"
 extern void my_mpi_fclose();
 #include "SCMVersHelp.h"
 DEFINE_DOVERS(mxssmp)
@@ -226,29 +227,6 @@ void runServer(Int32 argc, char **argv)
 
   while (TRUE)
   {
-
-/*
- * Until ssmp starts receiving messages, disable this check.
- * We need ssmp to wake up periodically to perform garbage collection.
- *
-    // wait for the first open message to come in
-    while (cc->getConnection() == NULL)
-      cc->wait(IpcInfiniteTimeout);
-
-    // start the first receive operation
-#ifdef _DEBUG_RTS
-    cerr << "No. of Requesters-1 "  << cc->getNumRequestors() << " \n";
-#endif
-    while (cc->getNumRequestors() > 0)
-    for (;;)
-    {
-      ssmpGlobals->work();
-    }
-  }
-*/
-    // wait for system messages only until ssmp starts receiving msgs.
-    cc->wait(300);
-    // go do GC.
     ssmpGlobals->work();
   }
 }

@@ -73,14 +73,14 @@ export REST_OPTS="-XX:+UseConcMarkSweepGC"
 # export REST_JMX_BASE="-Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false"
 # export REST_REST_OPTS="$REST_REST_OPTS $REST_JMX_BASE -Dcom.sun.management.jmxremote.port=10103"
 
-# File naming hosts on which REST Servers will run.  $REST_HOME/conf/servers by default.
-# export REST_SERVERS=${REST_HOME}/conf/servers
+# File naming hosts on which REST Servers will run.  $TRAF_CONF/rest/servers by default.
+# export REST_SERVERS=${TRAF_CONF}/rest/servers
 
 # Extra ssh options.  Empty by default.
 # export REST_SSH_OPTS="-o ConnectTimeout=1 -o SendEnv=REST_CONF_DIR"
 
-# Where log files are stored.  $REST_HOME/logs by default.
-# export REST_LOG_DIR=${REST_HOME}/logs
+# Where log files are stored.  $TRAF_LOG/rest by default.
+# export REST_LOG_DIR=$TRAF_LOG/rest
 
 # Enable remote JDWP debugging of major rest processes. Meant for Core Developers 
 # export REST_RESET_OPTS="$REST_RESET_OPTS -Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=8072"

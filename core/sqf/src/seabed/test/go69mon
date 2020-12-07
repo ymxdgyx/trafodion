@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # @@@ START COPYRIGHT @@@
 #
 # Licensed to the Apache Software Foundation (ASF) under one
@@ -21,6 +21,8 @@
 # @@@ END COPYRIGHT @@@
 
 if [ "$1" = "-start" ]; then
+export SQ_SHELL_NOCWD=1
+export SQ_CONFIGDB=$TRAF_VAR/sqconfig.db
 shift
 echo "********* run monitor *********"
 shell <<eof

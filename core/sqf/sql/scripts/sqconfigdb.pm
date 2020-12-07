@@ -119,6 +119,33 @@ sub addDbClusterData {
     $insDbClusterDataStmt->execute;
 }
 
+sub addDbNameServer {
+
+    if (not defined $DBH) {
+        # Database not available
+        return;
+    }
+
+    my $nodeName    = $_[0];
+
+    my $insDbNameServerStmt = $DBH->prepare("insert into monRegNameServer values (?, ?)");
+
+    $insDbNameServerStmt->bind_param(1, $nodeName);
+    $insDbNameServerStmt->bind_param(2, $nodeName);
+
+    $insDbNameServerStmt->execute;
+}
+
+sub delDbNameServerData {
+    if (not defined $DBH) {
+        # Database not available
+        return;
+    }
+
+    my $delDbNameServerStmt = $DBH->prepare("delete from monRegNameServer");
+    $delDbNameServerStmt->execute;
+}
+
 #sub addDbProcData {
 #
 #    if (not defined $DBH) {
@@ -292,6 +319,26 @@ sub addDbSpare {
     $insDbSpareStmt->execute;
 }
 
+sub addDbUniqStr {
+
+    if (not defined $DBH) {
+        # Database not available
+        return;
+    }
+
+    my $lv_nid      = $_[0];
+    my $lv_id       = $_[1];
+    my $lv_str      = $_[2];
+
+    my $insDbUniqStrStmt = $DBH->prepare("insert or replace into monRegUniqueStrings values ( ?, ?, ?)");
+
+    $insDbUniqStrStmt->bind_param(1, $lv_nid);
+    $insDbUniqStrStmt->bind_param(2, $lv_id);
+    $insDbUniqStrStmt->bind_param(3, $lv_str);
+
+    $insDbUniqStrStmt->execute;
+}
+
 sub listNodes {
     if (not defined $DBH) {
         # Database not available
@@ -316,7 +363,7 @@ sub openDb {
                   RaiseError => 1,
                   PrintError => 0,
                   ShowErrorStatement => 1};
-    $DBH = DBI->connect("dbi:SQLite:dbname=sqconfig.db","","",$dbargs);
+    $DBH = DBI->connect("dbi:SQLite:dbname=$ENV{'TRAF_VAR'}/sqconfig.db","","",$dbargs);
 #   Disable database synchronization (fsync) because it slows down writes
 #   too much.
     $DBH->do("PRAGMA synchronous = OFF");

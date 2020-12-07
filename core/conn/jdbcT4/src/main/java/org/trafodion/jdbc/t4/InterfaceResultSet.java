@@ -118,6 +118,12 @@ class InterfaceResultSet {
         /* BOOLEAN TYPE */
         static final int SQLTYPECODE_BOOLEAN = -701;
 
+        /* BINARY TYPE */
+        static final int SQLTYPECODE_BINARY = 60;
+
+        /* VARBINARY TYPE */
+        static final int SQLTYPECODE_VARBINARY = 61;
+
 	/* Date/Time/TimeStamp related constants */
 	static final int SQLDTCODE_DATE = 1;
 	static final int SQLDTCODE_TIME = 2;
@@ -156,10 +162,11 @@ class InterfaceResultSet {
 		case SQLTYPECODE_BITVAR:
                 case SQLTYPECODE_BLOB:
                 case SQLTYPECODE_CLOB:
+                case SQLTYPECODE_VARBINARY:
 			allocLength = bufferLen + 2;
 			break;
 		case SQLTYPECODE_CHAR:
-
+                case SQLTYPECODE_BINARY:
 			// allocLength = SQLOctetLength - 1; // no null at the end
 			allocLength = SQLOctetLength;
 			if (maxRowLen > 0) {
@@ -227,6 +234,16 @@ class InterfaceResultSet {
 			retObj = tbuffer;
 			break;
 		case SQLTYPECODE_VARCHAR:
+			tbuffer = new byte[byteLen];
+			System.arraycopy(ibuffer, byteIndex, tbuffer, 0, byteLen);
+			retObj = tbuffer;
+			break;
+		case SQLTYPECODE_BINARY:
+			tbuffer = new byte[byteLen];
+			System.arraycopy(ibuffer, byteIndex, tbuffer, 0, byteLen);
+			retObj = tbuffer;
+			break;
+		case SQLTYPECODE_VARBINARY:
 			tbuffer = new byte[byteLen];
 			System.arraycopy(ibuffer, byteIndex, tbuffer, 0, byteLen);
 			retObj = tbuffer;
@@ -392,6 +409,7 @@ class InterfaceResultSet {
 
 		switch (desc.sqlDataType_) {
 		case SQLTYPECODE_CHAR:
+                case SQLTYPECODE_BINARY:
 			length = desc.sqlOctetLength_;
 			tbuffer = new byte[length];
 			System.arraycopy(values, noNullValue, tbuffer, 0, length);
@@ -402,6 +420,7 @@ class InterfaceResultSet {
 		case SQLTYPECODE_VARCHAR_LONG:
 		case SQLTYPECODE_BLOB:
 		case SQLTYPECODE_CLOB:
+                case SQLTYPECODE_VARBINARY:
 			boolean shortLength = desc.precision_ < Math.pow(2, 15);
 			int dataOffset = noNullValue + ((shortLength) ? 2 : 4);
 
@@ -448,9 +467,6 @@ class InterfaceResultSet {
 					if (desc.sqlPrecision_ > 0) {
 						nanoSeconds = Bytes.extractUInt(values, noNullValue + 7, swap);
 
-						if (nanoSeconds > 999999) // returned in microseconds
-							nanoSeconds = 0;
-
 						// apply leading 0's for string conversion
 						tmpStr = "" + nanoSeconds;
 						length = tmpStr.length();
@@ -488,9 +504,6 @@ class InterfaceResultSet {
 
 						if (desc.sqlPrecision_ > 0) {
 							nanoSeconds = Bytes.extractUInt(values, noNullValue + 3, swap);
-
-							if (nanoSeconds > 999999) // returned in microseconds
-								nanoSeconds = 0;
 
 							String formatStr = "";
 							for(int i=0;i<desc.sqlPrecision_;i++)
@@ -692,6 +705,8 @@ class InterfaceResultSet {
 					case SQLTYPECODE_VARCHAR:
 					case SQLTYPECODE_BLOB:
 					case SQLTYPECODE_CLOB:
+                                        case SQLTYPECODE_BINARY:
+                                        case SQLTYPECODE_VARBINARY:
 						byteIndex++;
 						break;
 					}
@@ -712,7 +727,7 @@ class InterfaceResultSet {
 	}
 
 	// ----------------------------------------------------------------------------
-	void setExecute2FetchOutputs(TrafT4ResultSet rs, int rowsAffected, boolean endOfData, byte[] values)
+	void setExecute2FetchOutputs(TrafT4ResultSet rs, int rowsAffected, boolean endOfData, byte[] values, boolean calledByFetch)
 			throws SQLException {
 		if (rs.useOldDateFormat()) {
 			setFetchOutputs(rs, rowsAffected, endOfData, values);
@@ -728,24 +743,50 @@ class InterfaceResultSet {
 		int byteIndex = 0;
 		int SQLDataInd = 0;
 		int byteLen = 0;
+		int startOffset = 0;
+		int varOffset = 0;
+		int bufferLen =0;
 		int maxRowLen = rs.connection_.ic_.getTransportBufferSize(); // maxRowLen
 
 		columnArray = new Object[columnCount];
-
 		int dataLength = 0;
 
 		if (rs.outputDesc_ != null && rs.outputDesc_.length > 0) {
 			dataLength = rs.outputDesc_[0].rowLength_;
 		}
-
+		long [] colBufLen = new long[columnCount];
+		long remainLen = 0;
+		for (columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+			if(columnIndex == columnCount - 1)
+				colBufLen[columnIndex] = dataLength - remainLen;
+			else {
+				if(rs.outputDesc_[columnIndex+1].nullValue_ != -1) {
+					colBufLen[columnIndex] = rs.outputDesc_[columnIndex+1].nullValue_ - startOffset;
+					startOffset = rs.outputDesc_[columnIndex+1].nullValue_;
+				}
+				else
+				{
+					colBufLen[columnIndex] = rs.outputDesc_[columnIndex+1].noNullValue_ - startOffset;
+					startOffset = rs.outputDesc_[columnIndex+1].noNullValue_;
+				}
+				remainLen += colBufLen[columnIndex];
+			}
+		}
+		startOffset = 0;
 		int rowOffset = 0;
+        int varcharCount = 0;
+
+        for (columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            if(rs.outputDesc_[columnIndex].dataType_ == SQLTYPECODE_VARCHAR)
+                varcharCount ++;
+        }
+
 		for (rowIndex = 0; rowIndex < rowsAffected; rowIndex++) {
 			rowOffset = rowIndex * dataLength;
 
 			for (columnIndex = 0; columnIndex < columnCount; columnIndex++) {
 				int noNullValueOffset = rs.outputDesc_[columnIndex].noNullValue_;
 				int nullValueOffset = rs.outputDesc_[columnIndex].nullValue_;
-
 				if (nullValueOffset != -1)
 					nullValueOffset += rowOffset;
 				if (noNullValueOffset != -1)
@@ -758,18 +799,63 @@ class InterfaceResultSet {
 					rs.connection_.props_.t4Logger_.logp(Level.FINEST, "InterfaceResultSet", "setExecute2FetchOutputs",
 							temp, p);
 				}
-
-				if (nullValueOffset != -1 && Bytes.extractShort(values, nullValueOffset, this.ic_.getByteSwap()) == -1) {
-					columnValue = null;
-				} else {
-					columnValue = getExecute2FetchString(rs.connection_, rs.outputDesc_[columnIndex], values,
-							noNullValueOffset, rs.outputDesc_[columnIndex].dataType_, rs.useOldDateFormat(), this.ic_.getByteSwap());
-					if (columnValue == null) {
-						throw TrafT4Messages
-								.createSQLException(rs.connection_.props_, ic_.getLocale(), "null_data", null);
+		 		if (rs.connection_.props_.getClipVarchar() != 0 && calledByFetch && varcharCount > 0) { // parse clipped buffer
+					if (nullValueOffset != -1
+							&& Bytes.extractShort(values, startOffset, this.ic_.getByteSwap()) == -1) {
+						varOffset = noNullValueOffset - nullValueOffset;
+						columnValue = null;
+					} else {
+						if(nullValueOffset == -1)
+						{
+							varOffset = 0;
+							columnValue = getExecute2FetchString(rs.connection_, rs.outputDesc_[columnIndex], values,
+									startOffset, rs.outputDesc_[columnIndex].dataType_, rs.useOldDateFormat(),
+									this.ic_.getByteSwap());
+							if (columnValue == null) {
+								throw TrafT4Messages.createSQLException(rs.connection_.props_, ic_.getLocale(), "null_data",
+										null);
+							}
+						}
+						else {
+							varOffset = noNullValueOffset - nullValueOffset;
+							columnValue = getExecute2FetchString(rs.connection_, rs.outputDesc_[columnIndex], values,
+									startOffset + varOffset, rs.outputDesc_[columnIndex].dataType_,
+									rs.useOldDateFormat(), this.ic_.getByteSwap());
+							if (columnValue == null) {
+								throw TrafT4Messages.createSQLException(rs.connection_.props_, ic_.getLocale(),
+										"null_data", null);
+							}
+						}
+					} // end if else
+					switch (rs.outputDesc_[columnIndex].dataType_) {
+					case SQLTYPECODE_VARCHAR:
+						boolean shortLength = rs.outputDesc_[columnIndex].precision_ < Math.pow(2, 15);
+						int dataOffset = ((shortLength) ? 2 : 4);	
+						if(columnValue == null)
+							bufferLen = varOffset;
+						else
+					        bufferLen = varOffset + dataOffset + ((byte[]) columnValue).length;
+						startOffset += bufferLen;
+						break;
+					default:
+						startOffset += colBufLen[columnIndex];
+						break;
 					}
-				} // end if else
-
+				}
+				else{
+					if (nullValueOffset != -1
+							&& Bytes.extractShort(values, nullValueOffset, this.ic_.getByteSwap()) == -1) {
+						columnValue = null;
+					} else {
+						columnValue = getExecute2FetchString(rs.connection_, rs.outputDesc_[columnIndex], values,
+								noNullValueOffset, rs.outputDesc_[columnIndex].dataType_, rs.useOldDateFormat(),
+								this.ic_.getByteSwap());
+						if (columnValue == null) {
+							throw TrafT4Messages.createSQLException(rs.connection_.props_, ic_.getLocale(), "null_data",
+									null);
+						}
+					} // end if else	
+				}
 				columnArray[columnIndex] = columnValue;
 			} // end for
 
@@ -842,7 +928,7 @@ class InterfaceResultSet {
 					rs.rawBuffer_ = fr.outValues;
 				}
 
-				setExecute2FetchOutputs(rs, fr.rowsAffected, endOfData, fr.outValues);
+				setExecute2FetchOutputs(rs, fr.rowsAffected, endOfData, fr.outValues,true);
 
 				dataFound = true;
 			}

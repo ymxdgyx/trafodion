@@ -52,6 +52,7 @@
 #include "CmpSeabaseDDL.h"
 #include "TrafDDLdesc.h"
 
+#include "HBaseClient_JNI.h"
 
 /////////////////////////////////////////////////////////////////////
 //
@@ -255,6 +256,7 @@ int HbaseAccess::createAsciiColAndCastExpr(Generator * generator,
     }
 
   asciiValue = new (h) NATypeToItem(asciiType->newCopy(h));
+
   castValue = new(h) Cast(asciiValue, newGivenType);
   ((Cast*)castValue)->setSrcIsVarcharPtr(TRUE);
 
@@ -263,6 +265,9 @@ int HbaseAccess::createAsciiColAndCastExpr(Generator * generator,
   
   if (newGivenType->getTypeQualifier() == NA_INTERVAL_TYPE)
     ((Cast*)castValue)->setAllowSignInInterval(TRUE);
+
+  if (DFS2REC::isBinaryString(givenType.getFSDatatype()))
+    castValue = new(h) BuiltinFunction(ITM_DECODE_BASE64, h, 1, castValue);
 
   if (castValue && asciiValue)
     result = 1;
@@ -739,7 +744,7 @@ R4 is an aligned format row, tupp index 2 in work_cri_desc.
 Each column is of type as defined in hive metadata.
 Columns that are present only in the output expression (i.e. are not
 present in selection predicate) are placed in this tupp.
-This tupp is populated by project_convert_expr, which is called 
+This tupp is populated by move_cols_convert_expr, which is called 
 only if the row returns TRUE for the selection predicate. The goal is 
 to not convert columns for rows that do not pass the selection predicate.
 
@@ -814,7 +819,7 @@ short FileScan::codeGenForHive(Generator * generator)
   ex_expr *executor_expr = 0;
   ex_expr *proj_expr = 0;
   ex_expr *convert_expr = 0;
-  ex_expr *project_convert_expr = 0;
+  ex_expr *move_cols_convert_expr = 0;
 
   // set flag to enable pcode for indirect varchar
   NABoolean vcflag = exp_gen->handleIndirectVC();
@@ -1006,7 +1011,7 @@ short FileScan::codeGenForHive(Generator * generator)
       projectOnlyTuppIndex,                 // [IN] target tupp index
       hdfsRowFormat,                        // [IN] target tuple format
       projectOnlyColsRecLength,             // [OUT] target tuple length
-      &project_convert_expr,                // [OUT] move expression
+      &move_cols_convert_expr,                // [OUT] move expression
       &tuple_desc,                     // [optional OUT] target tuple desc
       ExpTupleDesc::LONG_FORMAT,       // [optional IN] target desc format
       NULL,
@@ -1319,6 +1324,10 @@ if (hTabStats->isOrcFile())
         }
     }
 
+  if (getTableDesc()->getNATable()->isEnabledForDDLQI())
+    generator->objectUids().insert(
+         getTableDesc()->getNATable()->objectUid().get_value());
+  
   // create hdfsscan_tdb
   ComTdbHdfsScan *hdfsscan_tdb = new(space) 
     ComTdbHdfsScan(
@@ -1327,7 +1336,7 @@ if (hTabStats->isOrcFile())
 		   executor_expr,
 		   proj_expr,
 		   convert_expr,
-                   project_convert_expr,
+                   move_cols_convert_expr,
 		   hdfsVals.entries(),      // size of convertSkipList
 		   convertSkipList,
 		   hdfsHostName, 
@@ -1394,9 +1403,6 @@ if (hTabStats->isOrcFile())
 
   hdfsscan_tdb->setUseCif(useCIF);
   hdfsscan_tdb->setUseCifDefrag(useCIFDegrag);
-
-  if (CmpCommon::getDefault(USE_LIBHDFS_SCAN) == DF_ON)
-     hdfsscan_tdb->setUseLibhdfsScan(TRUE);
 
   hdfsscan_tdb->setCompressedFile(isCompressedFile);
 
@@ -2166,6 +2172,7 @@ NABoolean HbaseAccess::isSnapshotScanFeasible(
   }
   return (snpType_ != SNP_NONE);
 }
+
 short HbaseAccess::createSortValue(ItemExpr * col_node,
 				   std::vector<SortValue> &myvector,
 				   NABoolean isSecondaryIndex)
@@ -2379,6 +2386,93 @@ static short HbaseAccess_updateHbaseInfoNode(
   return 0;
 }
 
+// asAnsiString: return name in ansi delimited format
+short FileScan::genTableName(Generator * generator,
+                             ComSpace *space,
+                             const CorrName &tableName,
+                             const NATable* naTable,
+                             const NAFileSet* naFileSet,
+                             const NABoolean asAnsiString,
+                             char* &gendTablename)
+{
+  gendTablename = NULL;
+
+  NAString tabNS;
+
+
+  if (naTable && ((naTable->isHbaseRowTable()) ||
+                  (naTable->isHbaseCellTable())))
+    {
+      if (NOT tabNS.isNull())
+        {
+          NAString tabName = tabNS +
+            tableName.getQualifiedNameObj().getObjectName();
+          gendTablename = space->AllocateAndCopyToAlignedSpace(tabName, 0);
+        }
+      else
+        {
+          gendTablename = space->AllocateAndCopyToAlignedSpace(
+               GenGetQualifiedName(
+                    tableName.getQualifiedNameObj().getObjectName(),
+                    FALSE), 0);
+        }
+    }
+  else if (naTable && (naTable->isHbaseMapTable()))
+    {
+      const char * tblColonPos =
+        strchr(tableName.getQualifiedNameObj().getObjectName(), ':');
+      if ((NOT tabNS.isNull()) &&
+          (!tblColonPos))
+        {
+          NAString tabName = tabNS +
+            tableName.getQualifiedNameObj().getObjectName();
+          gendTablename = space->AllocateAndCopyToAlignedSpace(tabName, 0);
+        }
+      else
+        {
+          gendTablename = space->AllocateAndCopyToAlignedSpace(
+               GenGetQualifiedName(
+                    tableName.getQualifiedNameObj().getObjectName(),
+                    FALSE), 0);
+        }
+    }
+  else if (naFileSet)
+    {
+      if (tabNS.isNull())
+        {
+          gendTablename = space->AllocateAndCopyToAlignedSpace(
+               GenGetQualifiedName(naFileSet->getFileSetName(),
+                                   FALSE), 0);
+        }
+      else
+        {
+          NAString tabName =
+            tabNS + GenGetQualifiedName(naFileSet->getFileSetName(),
+                                        FALSE);
+
+          gendTablename = space->AllocateAndCopyToAlignedSpace(tabName, 0);
+        }
+    }
+
+  if (gendTablename == NULL)
+    {
+      if (tabNS.isNull())
+        gendTablename = space->AllocateAndCopyToAlignedSpace(
+             GenGetQualifiedName(tableName, FALSE), 0);
+      else
+        {
+          NAString tabName =
+            tabNS +
+            GenGetQualifiedName(tableName, FALSE);
+
+          gendTablename = space->AllocateAndCopyToAlignedSpace(tabName, 0);
+        }
+    }
+
+  return 0;
+}
+
+
 short HbaseAccess::codeGen(Generator * generator)
 {
   Space * space          = generator->getSpace();
@@ -2467,38 +2561,64 @@ short HbaseAccess::codeGen(Generator * generator)
   // Always get the index name -- it will be the base tablename for
   // primary access if it is trafodion table.
   char * tablename = NULL;
+  char * baseTableName = NULL;
   char * snapshotName = NULL;
-  LatestSnpSupportEnum  latestSnpSupport=  latest_snp_supported;
-  if ((getTableDesc()->getNATable()->isHbaseRowTable()) ||
-      (getTableDesc()->getNATable()->isHbaseCellTable()) ||
-      (getTableName().getQualifiedNameObj().isHbaseMappedName()))
+
+ if (genTableName(generator, space, getTableName(),
+                  getTableDesc()->getNATable(),
+                  getIndexDesc()->getNAFileSet(),
+                  FALSE,
+                  tablename))
     {
-      tablename =
-        space->AllocateAndCopyToAlignedSpace(
-                                             GenGetQualifiedName(getTableName().getQualifiedNameObj().getObjectName()), 0);
-      latestSnpSupport = latest_snp_not_trafodion_table;
+      GenAssert(0,"genTableName failed");
     }
-  else
+
+  if (genTableName(generator, space, getTableDesc()->getCorrNameObj(),
+                  getTableDesc()->getNATable(),
+                  NULL,  // so we get the base table name
+                  FALSE,
+                  baseTableName))
     {
-      if (getIndexDesc() && getIndexDesc()->getNAFileSet())
-      {
-         tablename = space->AllocateAndCopyToAlignedSpace(GenGetQualifiedName(getIndexDesc()->getNAFileSet()->getFileSetName()), 0);
+      GenAssert(0,"genTableName failed");
+    }
+
+  LatestSnpSupportEnum  latestSnpSupport=  latest_snp_supported;
+  Int32 computedHBaseRowSizeFromMetaData = getTableDesc()->getNATable()->computeHBaseRowSizeFromMetaData();
+
+  if (CmpCommon::getDefault(TRAF_TABLE_SNAPSHOT_SCAN) != DF_NONE)
+  {
+      if (!getTableDesc()->getNATable()->isSeabaseTable()
+           || getTableDesc()->getNATable()->isSeabaseMDTable()
+           || (getTableDesc()->getNATable()->getTableName().getObjectName() == HBASE_HIST_NAME)
+           || (getTableDesc()->getNATable()->getTableName().getObjectName() == HBASE_HISTINT_NAME))
+         snpType_ = SNP_NONE;
+     else if ((getTableDesc()->getNATable()->isHbaseRowTable()) ||
+         (getTableDesc()->getNATable()->isHbaseCellTable()) ||
+         (getTableName().getQualifiedNameObj().isHbaseMappedName())) 
+        latestSnpSupport = latest_snp_not_trafodion_table;
+     else if (computedHBaseRowSizeFromMetaData * getEstRowsAccessed().getValue()  <
+                getDefault(TRAF_TABLE_SNAPSHOT_SCAN_TABLE_SIZE_THRESHOLD)*1024*1024)
+        latestSnpSupport = latest_snp_small_table;
+     else
+     {
+        if (getIndexDesc() && getIndexDesc()->getNAFileSet())
+        {
          if (getIndexDesc()->isClusteringIndex())
          {
-            //base table
-            snapshotName = (char*)getTableDesc()->getNATable()->getSnapshotName() ;
-           if (snapshotName == NULL)
-             latestSnpSupport = latest_snp_no_snapshot_available;
+              if (CmpCommon::getDefault(TRAF_TABLE_SNAPSHOT_SCAN) == DF_LATEST) {
+                  //Base table
+                 Lng32 retcode = HBaseClient_JNI::getLatestSnapshot(baseTableName, snapshotName, generator->wHeap()); 
+                 if (retcode != HBC_OK)
+                     GenAssert(0,"HBaseClient_JNI::getLatestSnapshot failed");
+                 if (snapshotName == NULL)
+                     latestSnpSupport = latest_snp_no_snapshot_available;
+             }
           }
           else
             latestSnpSupport = latest_snp_index_table;
       }
     }
-
-  if (! tablename) 
-     tablename =
-        space->AllocateAndCopyToAlignedSpace(
-                                           GenGetQualifiedName(getTableName()), 0);
+  } 
 
   ValueIdList columnList;
   if ((getTableDesc()->getNATable()->isSeabaseTable()) &&
@@ -3061,11 +3181,6 @@ short HbaseAccess::codeGen(Generator * generator)
       upqueuelength = ((buffersize / bufRowlen) * numBuffers)/2;
     }
 
-  Int32 computedHBaseRowSizeFromMetaData = getTableDesc()->getNATable()->computeHBaseRowSizeFromMetaData();
-  if (computedHBaseRowSizeFromMetaData * getEstRowsAccessed().getValue()  <
-                getDefault(TRAF_TABLE_SNAPSHOT_SCAN_TABLE_SIZE_THRESHOLD)*1024*1024)
-    latestSnpSupport = latest_snp_small_table;
-
   NAString serverNAS = ActiveSchemaDB()->getDefaults().getValue(HBASE_SERVER);
   NAString zkPortNAS = ActiveSchemaDB()->getDefaults().getValue(HBASE_ZOOKEEPER_PORT);
   char * server = space->allocateAlignedSpace(serverNAS.length() + 1);
@@ -3091,10 +3206,11 @@ short HbaseAccess::codeGen(Generator * generator)
   if (isSnapshotScanFeasible( latestSnpSupport,tablename))
   {
     snapAttrs->setUseSnapshotScan(TRUE );
+    snapAttrs->setSnapshotType(snpType_);
     if (snpType_ == SNP_LATEST)
     {
-      CMPASSERT(snapshotName != NULL);
-      snapNameNAS = snapshotName;
+      CMPASSERT(snapshotName != NULL);	
+      snapNameNAS = snapshotName;	
     }
     else if (snpType_ == SNP_SUFFIX)
     {
@@ -3142,7 +3258,7 @@ short HbaseAccess::codeGen(Generator * generator)
 
   generator->setHBaseNumCacheRows(MAXOF(getEstRowsAccessed().getValue(),
                                         getMaxCardEst().getValue()), 
-                                  hbpa, samplePercent()) ;
+                                  hbpa, hbaseRowSize,samplePercent()) ;
   generator->setHBaseCacheBlocks(hbaseRowSize,
                                  getEstRowsAccessed().getValue(),hbpa);
   generator->setHBaseSmallScanner(hbaseRowSize,
